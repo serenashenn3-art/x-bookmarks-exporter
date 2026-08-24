@@ -2,6 +2,10 @@
 
 Chrome 扩展（Manifest V3）：自动抓取 X（Twitter）书签，用 AI 分类打标，支持列表 / 分类汇总 / 行动看板三种视图浏览，以及 Markdown / JSON / CSV 多格式导出。
 
+## 教学视频
+
+▶ [下载观看 35 秒使用教学视频（xbe_tutorial.mp4）](https://github.com/serenashenn3-art/x-bookmarks-exporter/releases/download/v1.1.0/xbe_tutorial.mp4)，或访问 [v1.1.0 Release 页面](https://github.com/serenashenn3-art/x-bookmarks-exporter/releases/tag/v1.1.0)。
+
 ## 功能
 
 - **一键抓取书签**：打开 X 书签页，点击右下角「AI 抓取书签」浮动按钮，自动滚动到底部并抓取全部推文（ID 去重）。
