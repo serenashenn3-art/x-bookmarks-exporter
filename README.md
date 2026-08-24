@@ -4,7 +4,7 @@ Chrome 扩展（Manifest V3）：自动抓取 X（Twitter）书签，用 AI 分�
 
 ## 教学视频
 
-▶ [下载观看 35 秒使用教学视频（xbe_tutorial.mp4）](https://github.com/serenashenn3-art/x-bookmarks-exporter/releases/download/v1.1.0/xbe_tutorial.mp4)，或访问 [v1.1.0 Release 页面](https://github.com/serenashenn3-art/x-bookmarks-exporter/releases/tag/v1.1.0)。
+https://github.com/user-attachments/assets/c669b14b-ac60-40fe-8a3b-808941182870
 
 ## 功能
 
