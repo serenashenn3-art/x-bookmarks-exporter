@@ -4,6 +4,8 @@ Chrome 扩展（Manifest V3）：自动抓取 X（Twitter）书签，用 AI 分�
 
 ## 教学视频
 
+![系统架构图](docs/architecture.png)
+
 https://github.com/user-attachments/assets/c669b14b-ac60-40fe-8a3b-808941182870
 
 ## 功能
@@ -110,8 +112,6 @@ X 的页面结构偶尔改版。如果明显漏抓，是 DOM 选择器失效，�
 ---
 
 ## 架构
-
-![系统架构图](docs/architecture.png)
 
 ```
 x-bookmark-ai/
