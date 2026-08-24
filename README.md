@@ -111,6 +111,8 @@ X 的页面结构偶尔改版。如果明显漏抓，是 DOM 选择器失效，�
 
 ## 架构
 
+![系统架构图](docs/architecture.png)
+
 ```
 x-bookmark-ai/
 ├── manifest.json            MV3 清单（popup + module SW + content script）
