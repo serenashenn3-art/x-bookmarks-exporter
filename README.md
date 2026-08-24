@@ -1,5 +1,7 @@
 # X 书签 AI 分类
 
+![项目说明图](docs/hero.png)
+
 Chrome 扩展（Manifest V3）：自动抓取 X（Twitter）书签，用 AI 分类打标，支持列表 / 分类汇总 / 行动看板三种视图浏览，以及 Markdown / JSON / CSV 多格式导出。
 
 ## 教学视频
