@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>X 书签 AI 分类</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header id="toolbar">
+    <div class="row">
+      <input id="search" type="search" placeholder="搜索正文 / 作者 / 标签 / 摘要…">
+      <button id="settingsBtn" title="设置">⚙</button>
+    </div>
+    <div class="row">
+      <select id="filterCategory"><option value="">全部领域</option></select>
+      <select id="filterNature"><option value="">全部性质</option></select>
+      <select id="filterAction"><option value="">全部操作</option></select>
+      <select id="sort">
+        <option value="newest">最新优先</option>
+        <option value="oldest">最早优先</option>
+        <option value="category">按领域</option>
+        <option value="author">按作者</option>
+      </select>
+    </div>
+    <div class="row">
+      <span class="export-label">导出：</span>
+      <button class="export-btn" data-format="markdown">Markdown</button>
+      <button class="export-btn" data-format="json">JSON</button>
+      <button class="export-btn" data-format="csv">CSV</button>
+      <span id="count" class="count"></span>
+    </div>
+    <div id="progress" class="progress hidden"></div>
+  </header>
+
+  <nav id="tabs">
+    <button class="tab active" data-view="list">列表</button>
+    <button class="tab" data-view="group">分类汇总</button>
+    <button class="tab" data-view="kanban">行动看板</button>
+  </nav>
+
+  <main>
+    <section id="view-list" class="view"></section>
+
+    <section id="view-group" class="view hidden">
+      <div class="row group-dim">
+        <span>分组维度：</span>
+        <select id="groupDim">
+          <option value="category">领域</option>
+          <option value="nature">性质</option>
+          <option value="action">建议操作</option>
+        </select>
+      </div>
+      <div id="groupContainer"></div>
+    </section>
+
+    <section id="view-kanban" class="view hidden">
+      <div id="kanbanBoard"></div>
+    </section>
+  </main>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>
