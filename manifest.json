@@ -41,8 +41,10 @@
       "matches": [
         "https://x.com/*/bookmarks*",
         "https://x.com/i/bookmarks*",
+        "https://x.com/i/history*",
         "https://twitter.com/*/bookmarks*",
-        "https://twitter.com/i/bookmarks*"
+        "https://twitter.com/i/bookmarks*",
+        "https://twitter.com/i/history*"
       ],
       "js": ["content/scraper.js"],
       "run_at": "document_idle"

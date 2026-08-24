@@ -12,7 +12,9 @@
   const scrapedIds = new Map(); // 推文 ID -> true（去重）
   let running = false;
 
-  const isBookmarksPage = () => location.pathname.includes("/bookmarks");
+  // X 新版将书签并入「历史」页（/i/history，内含书签/喜欢两个标签），旧 /i/bookmarks 会 301 到 /i/history
+  const isBookmarksPage = () =>
+    location.pathname.includes("/bookmarks") || location.pathname.includes("/i/history");
 
   // ==================== DOM 提取 ====================
 
