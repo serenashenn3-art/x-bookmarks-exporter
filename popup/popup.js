@@ -6,7 +6,9 @@ import {
   CATEGORIES,
   NATURES,
   ACTIONS,
+  CONTENT_TYPES,
   NATURE_COLORS,
+  CONTENT_TYPE_COLORS,
   UNCATEGORIZED,
 } from "../lib/constants.js";
 
@@ -28,6 +30,8 @@ function currentFilter() {
     category: $("filterCategory").value,
     nature: $("filterNature").value,
     actionFilter: activeView === "kanban" ? "" : $("filterAction").value,
+    contentType: $("filterContentType").value,
+    readFilter: $("filterRead").value,
     sort: $("sort").value,
   };
 }
@@ -49,29 +53,70 @@ function natureBadge(nature) {
   return `<span class="badge" style="background:${color}">${esc(n)}</span>`;
 }
 
+function contentTypeBadge(contentType) {
+  const c = contentType || "文字";
+  const color = CONTENT_TYPE_COLORS[c] || "#9ca3af";
+  return `<span class="ctype-badge" style="background:${color}">${esc(c)}</span>`;
+}
+
 function tweetCard(t) {
   const date = (t.publishedAt || "").slice(0, 10);
   const tags = (t.tags || []).map((tag) => `#${esc(tag)}`).join(" ");
   const div = document.createElement("div");
-  div.className = "card";
+  div.className = "card" + (t.read ? " read" : "");
   div.dataset.id = t.id;
   div.innerHTML = `
     <div class="card-head">
       <span class="author">${esc(t.author?.name || "未知作者")}</span>
       <span class="handle">${esc(t.author?.handle || "")}</span>
       <span class="date">${esc(date)}</span>
+      ${contentTypeBadge(t.contentType)}
       ${natureBadge(t.nature)}
     </div>
     <div class="summary">${esc(t.summary || (t.content || "").slice(0, 80))}</div>
+    ${t.note ? `<div class="note-text">${esc(t.note)}</div>` : ""}
+    <div class="note-editor hidden">
+      <textarea placeholder="添加备注…">${esc(t.note || "")}</textarea>
+      <button class="note-save">保存备注</button>
+    </div>
     <div class="card-foot">
       <span class="tags">${tags}</span>
       <span>${esc(t.category || UNCATEGORIZED)}</span>
+      <button class="note-btn" title="备注">备注</button>
+      <button class="read-btn${t.read ? " done" : ""}" title="切换已读状态">${t.read ? "已读" : "未读"}</button>
       <button class="delete-btn" data-id="${esc(t.id)}" title="删除">✕</button>
-      <a href="${esc(t.url)}" target="_blank" rel="noopener">原文 ↗</a>
+      <a class="origin-link" href="${esc(t.url)}" target="_blank" rel="noopener">原文 ↗</a>
     </div>`;
+
   div.querySelector(".delete-btn").addEventListener("click", async (e) => {
     await send({ action: "deleteTweet", tweetId: e.target.dataset.id });
     reload();
+  });
+
+  // 备注：展开/收起编辑区，保存后写库
+  const editor = div.querySelector(".note-editor");
+  div.querySelector(".note-btn").addEventListener("click", () => editor.classList.toggle("hidden"));
+  div.querySelector(".note-save").addEventListener("click", async () => {
+    const note = editor.querySelector("textarea").value.trim();
+    const r = await send({ action: "updateNote", tweetId: t.id, note });
+    if (r?.success) {
+      t.note = note;
+      reload();
+    }
+  });
+
+  // 已读/未读切换
+  div.querySelector(".read-btn").addEventListener("click", async () => {
+    const r = await send({ action: "markRead", tweetId: t.id, read: !t.read });
+    if (r?.success) {
+      t.read = !t.read;
+      renderActiveView();
+    }
+  });
+
+  // 打开原文时自动标记已读
+  div.querySelector(".origin-link").addEventListener("click", () => {
+    if (!t.read) send({ action: "markRead", tweetId: t.id, read: true });
   });
   return div;
 }
@@ -146,6 +191,10 @@ function renderGroup() {
       const date = (t.publishedAt || "").slice(0, 10);
       item.innerHTML = `${esc(t.summary || (t.content || "").slice(0, 60))}
         <div class="handle">${esc(t.author?.handle || "")} · ${esc(date)} · <a href="${esc(t.url)}" target="_blank" rel="noopener">原文 ↗</a></div>`;
+      // 打开原文时自动标记已读
+      item.querySelector("a").addEventListener("click", () => {
+        if (!t.read) send({ action: "markRead", tweetId: t.id, read: true });
+      });
       body.appendChild(item);
     });
 
@@ -222,13 +271,14 @@ function initToolbar() {
   fillSelect($("filterCategory"), CATEGORIES.concat(UNCATEGORIZED));
   fillSelect($("filterNature"), NATURES.concat(UNCATEGORIZED));
   fillSelect($("filterAction"), ACTIONS);
+  fillSelect($("filterContentType"), CONTENT_TYPES);
 
   let searchTimer = null;
   $("search").addEventListener("input", () => {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(reload, 250); // 实时搜索（防抖）
   });
-  ["filterCategory", "filterNature", "filterAction", "sort"].forEach((id) =>
+  ["filterCategory", "filterNature", "filterAction", "filterContentType", "filterRead", "sort"].forEach((id) =>
     $(id).addEventListener("change", reload)
   );
   $("groupDim").addEventListener("change", (e) => {
@@ -238,12 +288,36 @@ function initToolbar() {
 
   $("settingsBtn").addEventListener("click", () => send({ action: "openOptions" }));
 
+  $("reclassifyBtn").addEventListener("click", async (e) => {
+    const btn = e.target;
+    btn.disabled = true;
+    try {
+      const r = await send({ action: "reclassify" });
+      btn.textContent = r?.success ? `已入队 ${r.queued} 条` : `失败: ${r?.error || "未知"}`;
+    } catch (err) {
+      btn.textContent = `失败: ${err.message}`;
+    } finally {
+      setTimeout(() => {
+        btn.disabled = false;
+        btn.textContent = "重分类";
+      }, 3000);
+    }
+  });
+
   document.querySelectorAll(".export-btn").forEach((btn) =>
     btn.addEventListener("click", async () => {
       const r = await send({ action: "exportTweets", format: btn.dataset.format, filter: currentFilter() });
       if (!r?.success) alert(r?.error || "导出失败");
     })
   );
+
+  $("clearAllBtn").addEventListener("click", async () => {
+    if (!confirm("确定清空全部书签？此操作不可恢复。")) return;
+    if (!confirm("再次确认：将删除所有书签及其分类、备注，是否继续？")) return;
+    const r = await send({ action: "clearAll" });
+    if (r?.success) reload();
+    else alert(r?.error || "清空失败");
+  });
 
   document.querySelectorAll(".tab").forEach((tab) =>
     tab.addEventListener("click", () => {

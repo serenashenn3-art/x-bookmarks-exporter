@@ -4,10 +4,11 @@
  */
 
 import assert from "node:assert/strict";
-import { CATEGORIES, NATURES, ACTIONS, DEFAULT_CLASSIFICATION, UNCATEGORIZED } from "../lib/constants.js";
+import { CATEGORIES, NATURES, ACTIONS, CONTENT_TYPES, DEFAULT_CLASSIFICATION, DEFAULT_TWEET_FIELDS, UNCATEGORIZED } from "../lib/constants.js";
 import { buildClassificationPrompt, buildGroupSummaryPrompt, extractJson, normalizeClassification } from "../lib/prompt.js";
 import { PROVIDERS, normalizeAiConfig, buildRequest, parseResponse } from "../lib/ai-providers.js";
-import { toMarkdown, toCSV, toJSON, buildExport } from "../lib/export.js";
+import { toMarkdown, toObsidian, toCSV, toJSON, buildExport } from "../lib/export.js";
+import { stripOembedHtml, upgradeImageUrl, detectContentType, matchesRead } from "../lib/media.js";
 
 let passed = 0;
 const t = (name, fn) => {
@@ -55,6 +56,15 @@ t("constants: 维度枚举符合规格", () => {
   assert.equal(DEFAULT_CLASSIFICATION.category, "未分类");
 });
 
+t("constants: 内容类型四选一，默认字段齐全", () => {
+  assert.deepEqual(CONTENT_TYPES, ["文章", "视频", "图片", "文字"]);
+  assert.equal(DEFAULT_TWEET_FIELDS.contentType, "文字");
+  assert.equal(DEFAULT_TWEET_FIELDS.read, false);
+  assert.equal(DEFAULT_TWEET_FIELDS.note, "");
+  assert.deepEqual(DEFAULT_TWEET_FIELDS.images, []);
+  assert.equal(DEFAULT_TWEET_FIELDS.truncated, false);
+});
+
 // ---------- prompt 构建 ----------
 t("buildClassificationPrompt: 含全部维度与推文内容", () => {
   const msgs = buildClassificationPrompt(tweets[0]);
@@ -62,6 +72,13 @@ t("buildClassificationPrompt: 含全部维度与推文内容", () => {
   assert.equal(msgs[0].role, "system");
   assert.ok(msgs[0].content.includes("category") && msgs[0].content.includes("action"));
   assert.ok(msgs[1].content.includes("@alice") && msgs[1].content.includes("LLM"));
+});
+
+t("buildClassificationPrompt: 携带 contentType 作为上下文", () => {
+  const withType = buildClassificationPrompt({ ...tweets[0], contentType: "视频" });
+  assert.ok(withType[1].content.includes("内容类型: 视频"));
+  const noType = buildClassificationPrompt(tweets[0]);
+  assert.ok(!noType[1].content.includes("内容类型:"));
 });
 
 t("buildGroupSummaryPrompt: 包含组名与条数", () => {
@@ -194,6 +211,129 @@ t("buildExport: 各格式文件名与 MIME", () => {
   assert.match(buildExport(tweets, "markdown").filename, /\.md$/);
   assert.match(buildExport(tweets, "json").filename, /\.json$/);
   assert.equal(buildExport(tweets, "csv").mimeType, "text/csv");
+  assert.match(buildExport(tweets, "obsidian").filename, /obsidian.*\.md$/);
+  assert.equal(buildExport(tweets, "obsidian").mimeType, "text/markdown");
+});
+
+// ---------- oEmbed 正文剥标签 ----------
+t("stripOembedHtml: 剥标签并保留正文", () => {
+  const html = `<blockquote class="twitter-tweet"><p lang="zh" dir="ltr">这是完整正文，<br>带换行 &amp; 实体</p>&mdash; Alice (@alice) <a href="https://twitter.com/alice/status/111">August 20, 2026</a></blockquote>`;
+  const text = stripOembedHtml(html);
+  assert.ok(text.includes("这是完整正文"));
+  assert.ok(text.includes("带换行 & 实体"));
+  assert.ok(!text.includes("<"));
+  assert.ok(!text.includes("blockquote"));
+});
+
+t("stripOembedHtml: 去掉尾部署名行", () => {
+  const html = `<blockquote class="twitter-tweet"><p>正文内容</p>&mdash; Alice (@alice) <a href="https://twitter.com/alice/status/111">August 20, 2026</a></blockquote>`;
+  const text = stripOembedHtml(html);
+  assert.equal(text, "正文内容");
+});
+
+t("stripOembedHtml: 空输入返回空串", () => {
+  assert.equal(stripOembedHtml(""), "");
+  assert.equal(stripOembedHtml(null), "");
+});
+
+// ---------- 图片 URL 尺寸替换 ----------
+t("upgradeImageUrl: name=small 替换为 name=large", () => {
+  assert.equal(
+    upgradeImageUrl("https://pbs.twimg.com/media/abc.jpg?format=jpg&name=small"),
+    "https://pbs.twimg.com/media/abc.jpg?format=jpg&name=large"
+  );
+});
+t("upgradeImageUrl: name=360x360 替换为 name=large", () => {
+  assert.equal(
+    upgradeImageUrl("https://pbs.twimg.com/media/abc.jpg?format=jpg&name=360x360"),
+    "https://pbs.twimg.com/media/abc.jpg?format=jpg&name=large"
+  );
+});
+t("upgradeImageUrl: 无 name 参数时追加", () => {
+  assert.equal(
+    upgradeImageUrl("https://pbs.twimg.com/media/abc.jpg?format=jpg"),
+    "https://pbs.twimg.com/media/abc.jpg?format=jpg&name=large"
+  );
+});
+t("upgradeImageUrl: 非 pbs.twimg.com 原样返回", () => {
+  assert.equal(upgradeImageUrl("https://example.com/a.png?name=small"), "https://example.com/a.png?name=small");
+  assert.equal(upgradeImageUrl(""), "");
+});
+
+// ---------- 内容类型判定 ----------
+t("detectContentType: 文章优先级最高", () => {
+  assert.equal(detectContentType({ isArticle: true, hasVideo: true, imageCount: 2 }), "文章");
+});
+t("detectContentType: 视频 > 图片 > 文字", () => {
+  assert.equal(detectContentType({ hasVideo: true, imageCount: 2 }), "视频");
+  assert.equal(detectContentType({ imageCount: 3 }), "图片");
+  assert.equal(detectContentType({}), "文字");
+  assert.equal(detectContentType(), "文字");
+});
+
+// ---------- 已读过滤 ----------
+t("matchesRead: 全部/已读/未读", () => {
+  const read = { read: true };
+  const unread = { read: false };
+  const legacy = {}; // 旧数据无 read 字段视为未读
+  assert.ok(matchesRead(read, "") && matchesRead(unread, "all"));
+  assert.ok(matchesRead(read, "read") && !matchesRead(unread, "read"));
+  assert.ok(matchesRead(unread, "unread") && !matchesRead(read, "unread"));
+  assert.ok(matchesRead(legacy, "unread"));
+});
+
+// ---------- Obsidian 导出 ----------
+t("toObsidian: frontmatter / callout / 图片内嵌 / 视频链接 / #tag", () => {
+  const rich = [
+    {
+      id: "333",
+      url: "https://x.com/carol/status/333",
+      author: { name: "Carol", handle: "@carol" },
+      content: "完整正文第一行\n第二行",
+      publishedAt: "2026-08-22T10:00:00Z",
+      category: "AI/技术",
+      nature: "工具资源",
+      contentType: "视频",
+      mediaType: "video",
+      tags: ["llm", "开源"],
+      summary: "视频摘要",
+      action: "稍后阅读",
+      note: "我的备注\n第二行备注",
+      read: true,
+      images: ["https://pbs.twimg.com/media/abc.jpg?format=jpg&name=large"],
+    },
+  ];
+  const md = toObsidian(rich);
+  // frontmatter 字段
+  assert.ok(md.includes("id: 333"));
+  assert.ok(md.includes("category: AI/技术"));
+  assert.ok(md.includes("contentType: 视频"));
+  assert.ok(md.includes("read: true"));
+  assert.ok(md.includes("url: https://x.com/carol/status/333"));
+  assert.ok(md.includes("tags: [llm, 开源]"));
+  // 完整正文
+  assert.ok(md.includes("完整正文第一行\n第二行"));
+  // AI 摘要
+  assert.ok(md.includes("**AI 摘要**：视频摘要"));
+  // 备注 callout
+  assert.ok(md.includes("> [!note] 备注"));
+  assert.ok(md.includes("> 我的备注"));
+  assert.ok(md.includes("> 第二行备注"));
+  // 图片内嵌与视频链接
+  assert.ok(md.includes("![](https://pbs.twimg.com/media/abc.jpg?format=jpg&name=large)"));
+  assert.ok(md.includes("▶ 视频：https://x.com/carol/status/333"));
+  // #tag 形式
+  assert.ok(md.includes("#llm #开源"));
+  // 分组二级标题
+  assert.ok(md.includes("## AI/技术（1）"));
+});
+
+t("toObsidian: 无备注/无媒体时不输出对应区块", () => {
+  const md = toObsidian([tweets[1]]);
+  assert.ok(!md.includes("[!note]"));
+  assert.ok(!md.includes("![]("));
+  assert.ok(!md.includes("▶ 视频"));
+  assert.ok(md.includes("read: false"));
 });
 
 // ---------- 去重 Map 逻辑（与 content/scraper.js 相同模式） ----------

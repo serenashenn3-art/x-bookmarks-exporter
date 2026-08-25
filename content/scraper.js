@@ -35,6 +35,59 @@
     return clone.textContent.trim();
   }
 
+  // 以下为 lib/media.js 同名函数的内联同步副本（content script 为 classic script，无法 import），改动请两边同步
+  function upgradeImageUrl(url) {
+    if (!url || typeof url !== "string" || !url.includes("pbs.twimg.com")) return url || "";
+    if (/([?&])name=/.test(url)) return url.replace(/([?&])name=[^&]*/, "$1name=large");
+    return url + (url.includes("?") ? "&" : "?") + "name=large";
+  }
+
+  function detectContentType(feats) {
+    const hasVideo = !!(feats && feats.hasVideo);
+    const imageCount = (feats && feats.imageCount) || 0;
+    const isArticle = !!(feats && feats.isArticle);
+    if (isArticle) return "文章";
+    if (hasVideo) return "视频";
+    if (imageCount > 0) return "图片";
+    return "文字";
+  }
+
+  /** 卡片内是否有「显示更多 / Show more」截断链接 */
+  function detectTruncated(article) {
+    return Array.from(article.querySelectorAll("a[href*='/status/']")).some((a) => {
+      const txt = (a.textContent || "").trim();
+      return txt === "显示更多" || txt === "Show more" || txt === "Show More";
+    });
+  }
+
+  /** 卡片内是否含视频（video 元素或 videoPlayer / playButton 等 testid） */
+  function detectVideo(article) {
+    return !!(
+      article.querySelector("video") ||
+      article.querySelector('[data-testid="videoPlayer"], [data-testid="videoComponent"], [data-testid="playButton"]')
+    );
+  }
+
+  /** 抓取卡片内全部图片并升级为原图（name=large） */
+  function extractImages(article) {
+    const urls = [];
+    article.querySelectorAll('div[data-testid="tweetPhoto"] img').forEach((img) => {
+      const src = upgradeImageUrl(img.getAttribute("src") || "");
+      if (src && !urls.includes(src)) urls.push(src);
+    });
+    return urls;
+  }
+
+  /** X 长文（Articles）：卡片带「X 文章」徽标，或正文达到长文特征（≥280 字） */
+  function detectArticle(article, content) {
+    const hasBadge = Array.from(article.querySelectorAll('[aria-label], span')).some((el) => {
+      const label = el.getAttribute && el.getAttribute("aria-label");
+      const txt = label || "";
+      return txt === "X 文章" || txt === "X Article" || /^文章$|^Article$/.test(txt);
+    });
+    return hasBadge || (content || "").length >= 280;
+  }
+
   function parseTweet(article) {
     try {
       const timeEl = article.querySelector("a[href*='/status/'] time, time");
@@ -58,6 +111,12 @@
       const textEl = article.querySelector('[data-testid="tweetText"]');
       const content = textEl ? getTextWithLinks(textEl) : "";
 
+      const truncated = detectTruncated(article);
+      const hasVideo = detectVideo(article);
+      const images = extractImages(article);
+      const isArticle = detectArticle(article, content);
+      const contentType = detectContentType({ hasVideo, imageCount: images.length, isArticle });
+
       return {
         id: tweetId,
         url: `https://x.com${href}`,
@@ -65,6 +124,10 @@
         content,
         publishedAt: timeEl.getAttribute("datetime") || "",
         scrapedAt: Date.now(),
+        truncated,
+        mediaType: hasVideo ? "video" : images.length ? "photo" : null,
+        images,
+        contentType,
       };
     } catch {
       return null;

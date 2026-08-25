@@ -15,6 +15,12 @@
       <select id="filterCategory"><option value="">全部领域</option></select>
       <select id="filterNature"><option value="">全部性质</option></select>
       <select id="filterAction"><option value="">全部操作</option></select>
+      <select id="filterContentType"><option value="">全部类型</option></select>
+      <select id="filterRead">
+        <option value="">全部状态</option>
+        <option value="unread">未读</option>
+        <option value="read">已读</option>
+      </select>
       <select id="sort">
         <option value="newest">最新优先</option>
         <option value="oldest">最早优先</option>
@@ -25,8 +31,11 @@
     <div class="row">
       <span class="export-label">导出：</span>
       <button class="export-btn" data-format="markdown">Markdown</button>
+      <button class="export-btn" data-format="obsidian">Obsidian</button>
       <button class="export-btn" data-format="json">JSON</button>
       <button class="export-btn" data-format="csv">CSV</button>
+      <button id="reclassifyBtn" title="对全部书签重新运行 AI 分类">重分类</button>
+      <button id="clearAllBtn" title="删除所有书签（不可恢复）">清空全部</button>
       <span id="count" class="count"></span>
     </div>
     <div id="progress" class="progress hidden"></div>

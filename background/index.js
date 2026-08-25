@@ -8,6 +8,7 @@ import { DEFAULT_CLASSIFICATION } from "../lib/constants.js";
 import { buildClassificationPrompt, buildGroupSummaryPrompt, extractJson, normalizeClassification } from "../lib/prompt.js";
 import { callAI, testConnection, normalizeAiConfig } from "../lib/ai-providers.js";
 import { buildExport } from "../lib/export.js";
+import { stripOembedHtml, matchesRead } from "../lib/media.js";
 import {
   getAiConfig,
   getAllTweets,
@@ -15,13 +16,28 @@ import {
   saveTweets,
   updateTweet,
   deleteTweet,
+  clearAllTweets,
   migrateLegacy,
 } from "../lib/storage.js";
 
 const QUEUE_KEY = "xb_queue_state";
 const CLASSIFY_INTERVAL_MS = 500;
+const OEMBED_BASE = "https://publish.twitter.com/oembed?url=";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * 用免鉴权的 publish.twitter.com/oEmbed 接口补全被 X 截断的长推文正文。
+ * 成功返回纯文本全文；失败抛错由调用方降级处理。
+ */
+async function fetchFullText(tweet) {
+  const res = await fetch(OEMBED_BASE + encodeURIComponent(tweet.url));
+  if (!res.ok) throw new Error(`oEmbed HTTP ${res.status}`);
+  const data = await res.json();
+  const text = stripOembedHtml(data.html || "");
+  if (!text) throw new Error("oEmbed 返回无正文");
+  return text;
+}
 
 // ==================== 队列（SW 终止可恢复） ====================
 
@@ -112,8 +128,19 @@ async function processQueue() {
 
 /** 分类单条；AI 失败时降级为默认分类，不阻塞队列 */
 async function classifyOne(id) {
-  const tweet = await getTweet(id);
+  let tweet = await getTweet(id);
   if (!tweet) return;
+
+  // 长推文补全：时间线正文被截断（truncated）时先走 oEmbed 拿全文
+  if (tweet.truncated && !tweet.fullTextFailed) {
+    try {
+      const full = await fetchFullText(tweet);
+      tweet = (await updateTweet(id, { content: full, truncated: false })) || tweet;
+    } catch {
+      await updateTweet(id, { fullTextFailed: true }); // 保持原文，标记补全失败
+    }
+  }
+
   try {
     const config = await getAiConfig();
     const text = await callAI(config, buildClassificationPrompt(tweet), {
@@ -174,6 +201,8 @@ function queryTweets(tweets, filter = {}) {
   if (filter.category) list = list.filter((t) => t.category === filter.category);
   if (filter.nature) list = list.filter((t) => t.nature === filter.nature);
   if (filter.actionFilter) list = list.filter((t) => t.action === filter.actionFilter);
+  if (filter.contentType) list = list.filter((t) => (t.contentType || "文字") === filter.contentType);
+  list = list.filter((t) => matchesRead(t, filter.readFilter));
 
   const byTime = (t) => new Date(t.publishedAt || 0).getTime() || t.scrapedAt || 0;
   switch (filter.sort) {
@@ -227,6 +256,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     deleteTweet: async () => {
       await deleteTweet(message.tweetId);
       return { success: true };
+    },
+    clearAll: async () => {
+      const removed = await clearAllTweets();
+      return { success: true, removed };
+    },
+    updateNote: async () => {
+      const updated = await updateTweet(message.tweetId, {
+        note: message.note || "",
+        noteUpdatedAt: Date.now(),
+      });
+      return updated ? { success: true, tweet: updated } : { success: false, error: "推文不存在" };
+    },
+    markRead: async () => {
+      const updated = await updateTweet(message.tweetId, { read: message.read !== false });
+      return updated ? { success: true, tweet: updated } : { success: false, error: "推文不存在" };
     },
     updateTweetAction: async () => {
       const updated = await updateTweet(message.tweetId, { action: message.newAction });
