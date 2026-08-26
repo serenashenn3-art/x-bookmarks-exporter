@@ -52,12 +52,28 @@
     return "文字";
   }
 
-  /** 卡片内是否有「显示更多 / Show more」截断链接 */
-  function detectTruncated(article) {
-    return Array.from(article.querySelectorAll("a[href*='/status/']")).some((a) => {
+  /** 卡片内是否有「显示更多 / Show more」截断链接，或正文以省略号结尾 */
+  function detectTruncated(article, content) {
+    const hasMore = Array.from(article.querySelectorAll("a[href*='/status/']")).some((a) => {
       const txt = (a.textContent || "").trim();
       return txt === "显示更多" || txt === "Show more" || txt === "Show More";
     });
+    return hasMore || /(\.\.\.|…)\s*$/.test((content || "").trim());
+  }
+
+  /**
+   * X 文章（长文）卡片的正文兜底提取：
+   * 文章预览不在 [data-testid="tweetText"] 里，取卡片内带 lang/dir 属性的最长文本块
+   * （作者行、按钮文本都很短，最长的一定是文章标题+预览正文）
+   */
+  function extractArticleText(article) {
+    let best = "";
+    article.querySelectorAll("div[lang], span[lang], div[dir='auto']").forEach((el) => {
+      if (el.closest('[data-testid="User-Name"]')) return;
+      const txt = (el.textContent || "").trim();
+      if (txt.length > best.length) best = txt;
+    });
+    return best;
   }
 
   /** 卡片内是否含视频（video 元素或 videoPlayer / playButton 等 testid） */
@@ -109,9 +125,10 @@
       const handle = handleMatch ? `@${handleMatch[1]}` : "";
 
       const textEl = article.querySelector('[data-testid="tweetText"]');
-      const content = textEl ? getTextWithLinks(textEl) : "";
+      let content = textEl ? getTextWithLinks(textEl) : "";
+      if (!content) content = extractArticleText(article); // X 文章卡片兜底
 
-      const truncated = detectTruncated(article);
+      const truncated = detectTruncated(article, content);
       const hasVideo = detectVideo(article);
       const images = extractImages(article);
       const isArticle = detectArticle(article, content);

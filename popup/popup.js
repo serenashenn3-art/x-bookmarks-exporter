@@ -74,6 +74,7 @@ function tweetCard(t) {
       ${natureBadge(t.nature)}
     </div>
     <div class="summary">${esc(t.summary || (t.content || "").slice(0, 80))}</div>
+    ${t.content ? `<div class="fulltext${t.contentType === "文章" ? "" : " hidden"}">${esc(t.content)}</div>` : ""}
     ${t.note ? `<div class="note-text">${esc(t.note)}</div>` : ""}
     <div class="note-editor hidden">
       <textarea placeholder="添加备注…">${esc(t.note || "")}</textarea>
@@ -82,6 +83,7 @@ function tweetCard(t) {
     <div class="card-foot">
       <span class="tags">${tags}</span>
       <span>${esc(t.category || UNCATEGORIZED)}</span>
+      ${t.content ? `<button class="fulltext-btn">${t.contentType === "文章" ? "收起全文" : "展开全文"}</button>` : ""}
       <button class="note-btn" title="备注">备注</button>
       <button class="read-btn${t.read ? " done" : ""}" title="切换已读状态">${t.read ? "已读" : "未读"}</button>
       <button class="delete-btn" data-id="${esc(t.id)}" title="删除">✕</button>
@@ -104,6 +106,16 @@ function tweetCard(t) {
       reload();
     }
   });
+
+  // 全文展开/收起
+  const ftBtn = div.querySelector(".fulltext-btn");
+  if (ftBtn) {
+    ftBtn.addEventListener("click", () => {
+      const ft = div.querySelector(".fulltext");
+      ft.classList.toggle("hidden");
+      ftBtn.textContent = ft.classList.contains("hidden") ? "展开全文" : "收起全文";
+    });
+  }
 
   // 已读/未读切换
   div.querySelector(".read-btn").addEventListener("click", async () => {

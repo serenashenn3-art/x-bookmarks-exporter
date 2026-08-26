@@ -39,6 +39,90 @@ async function fetchFullText(tweet) {
   return text;
 }
 
+/**
+ * 在真实文章页面执行的正文提取（自包含，由 scripting.executeScript 注入）。
+ * X 长文（Articles）正文不在 tweetText 里，oEmbed 也只返回链接，必须开页面抓。
+ * 只认文章阅读视图，且要求足够长，避免把作者栏/关注按钮等页面噪音当正文。
+ */
+function extractArticleTextInPage() {
+  const root =
+    document.querySelector('[data-testid="twitterArticleReadView"]') ||
+    document.querySelector('[data-testid="article"]') ||
+    document.querySelector('main[role="main"]');
+  if (!root) return null;
+  const nodes = root.querySelectorAll("h1, h2, h3, p, li, blockquote, [dir='auto'][lang]");
+  const picked = [];
+  const seen = new Set();
+  for (const el of nodes) {
+    // 只取叶子级，避免父容器重复整段文本
+    if (el.querySelector("h1, h2, h3, p, li, blockquote, [dir='auto'][lang]")) continue;
+    // 跳过作者栏 / 按钮 / 站点导航里的文本（保留文章自身 header 中的引语段）
+    if (el.closest('[data-testid="User-Name"], [role="button"], button, nav, header[role="banner"]')) continue;
+    const text = (el.innerText || "").trim();
+    if (text.length < 20 || seen.has(text)) continue;
+    if (/^(关注|正在关注|Follow|Following|Subscribe|订阅)$/.test(text)) continue;
+    seen.add(text);
+    picked.push(text);
+  }
+  const joined = picked.join("\n\n");
+  return joined.length >= 300 ? joined : null; // 太短多半是噪音，宁缺毋滥
+}
+
+/** 等标签页加载完成（带竞态处理与超时） */
+function waitTabComplete(tabId, timeoutMs = 20000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      chrome.tabs.onUpdated.removeListener(onUpdated);
+      reject(new Error("页面加载超时"));
+    }, timeoutMs);
+    function onUpdated(id, info) {
+      if (id === tabId && info.status === "complete") {
+        clearTimeout(timer);
+        chrome.tabs.onUpdated.removeListener(onUpdated);
+        resolve();
+      }
+    }
+    chrome.tabs.onUpdated.addListener(onUpdated);
+    // 竞态：监听器挂上时页面可能已加载完
+    chrome.tabs.get(tabId).then((t) => {
+      if (t?.status === "complete") {
+        clearTimeout(timer);
+        chrome.tabs.onUpdated.removeListener(onUpdated);
+        resolve();
+      }
+    }).catch(() => {});
+  });
+}
+
+/**
+ * 文章类型：后台开一个不可见标签页抓 X Articles 正文。
+ * 实测规律：/<handle>/article/<tweetId> 直接打开就是文章阅读页
+ * （/i/article/<articleId> 也会重定向到这个形态），无需先进详情页找链接。
+ * 成功返回纯文本；失败返回 null（调用方保持现状）。
+ */
+async function fetchArticleFullText(tweet) {
+  let tabId = null;
+  try {
+    const handle = (tweet.author?.handle || "").replace(/^@/, "");
+    if (!handle) return null;
+    const articleUrl = `https://x.com/${handle}/article/${tweet.id}`;
+    const tab = await chrome.tabs.create({ url: articleUrl, active: false });
+    tabId = tab.id;
+    await waitTabComplete(tabId);
+    await sleep(2500); // 等前端渲染
+
+    const [result] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: extractArticleTextInPage,
+    });
+    return result?.result || null;
+  } catch {
+    return null;
+  } finally {
+    if (tabId != null) chrome.tabs.remove(tabId).catch(() => {});
+  }
+}
+
 // ==================== 队列（SW 终止可恢复） ====================
 
 let queue = []; // 待分类推文 id
@@ -97,13 +181,22 @@ async function enqueue(tweetIds) {
 async function processQueue() {
   if (processing) return;
   processing = true;
+  // 保活：文章全文抓取可能让 SW 空闲超时被杀，周期性 API 调用重置空闲计时
+  const keepAlive = setInterval(() => {
+    chrome.runtime.getPlatformInfo(() => void chrome.runtime.lastError);
+  }, 20000);
   try {
     while (queue.length) {
       const id = queue[0];
       const done = queueTotal - queue.length;
       broadcast({ action: "classifyProgress", done, total: queueTotal, currentId: id });
 
-      await classifyOne(id);
+      try {
+        await classifyOne(id);
+      } catch (e) {
+        // 单条异常不阻塞整条队列
+        console.error("classifyOne failed:", id, e);
+      }
 
       queue.shift();
       await persistQueue();
@@ -117,6 +210,7 @@ async function processQueue() {
       if (queue.length) await sleep(CLASSIFY_INTERVAL_MS); // 防限流
     }
   } finally {
+    clearInterval(keepAlive);
     processing = false;
     if (!queue.length) {
       queueTotal = 0;
@@ -138,6 +232,30 @@ async function classifyOne(id) {
       tweet = (await updateTweet(id, { content: full, truncated: false })) || tweet;
     } catch {
       await updateTweet(id, { fullTextFailed: true }); // 保持原文，标记补全失败
+    }
+  }
+
+  // 文章（Articles）：oEmbed 只返回链接，内容为空或只是链接时开后台标签页抓全文
+  // 失败计次，最多重试 3 次（代码升级后仍有机会补上，又不会每次抓取都白开标签页）
+  const contentTrim = (tweet.content || "").trim();
+  const looksLikeOnlyLink =
+    /^https?:\/\/\S+(\s|$)/.test(contentTrim) ||
+    (tweet.contentType === "文章" && (!contentTrim || contentTrim.length < 200));
+  if (looksLikeOnlyLink && (tweet.articleFetchFails || 0) < 3) {
+    const full = await fetchArticleFullText(tweet);
+    if (full) {
+      tweet = (await updateTweet(id, {
+        content: full,
+        truncated: false,
+        contentType: "文章",
+        articleFetchFails: 0,
+        articleFetchFailed: false,
+      })) || tweet;
+    } else {
+      await updateTweet(id, {
+        articleFetchFails: (tweet.articleFetchFails || 0) + 1,
+        articleFetchFailed: true,
+      });
     }
   }
 
@@ -239,9 +357,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // content 脚本批量上报
     saveTweets: async () => {
       const r = await saveTweets(message.tweets);
-      if (r.added > 0 && message.autoClassify !== false) {
-        const ids = message.tweets.map((t) => t.id);
-        enqueue(ids);
+      if (message.autoClassify !== false) {
+        // 新增 + 被补全内容的旧记录都入队分类
+        const ids = [...(r.addedIds || []), ...(r.updated || [])];
+        if (ids.length) enqueue(ids);
       }
       return { success: true, ...r };
     },
