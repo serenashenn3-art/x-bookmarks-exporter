@@ -17,6 +17,9 @@ import {
 let tweets = []; // 当前筛选条件下的可见推文
 let activeView = "list";
 let groupDim = "category";
+let wikiConfig = null; // LLM Wiki 配置（null = 尚未加载）
+let batchMode = false;
+const selectedIds = new Set();
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) =>
@@ -45,6 +48,17 @@ async function reload() {
   renderActiveView();
 }
 
+// ==================== Toast 轻提示 ====================
+
+let toastTimer = null;
+function showToast(text, ms = 2500) {
+  const el = $("toast");
+  el.textContent = text;
+  el.classList.remove("hidden");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.add("hidden"), ms);
+}
+
 // ==================== 渲染：列表视图 ====================
 
 function natureBadge(nature) {
@@ -63,8 +77,11 @@ function tweetCard(t) {
   const date = (t.publishedAt || "").slice(0, 10);
   const tags = (t.tags || []).map((tag) => `#${esc(tag)}`).join(" ");
   const div = document.createElement("div");
-  div.className = "card" + (t.read ? " read" : "");
+  // Wiki 同步状态反映在卡片左边框上
+  const wikiClass = t.wikiSynced ? " wiki-synced" : t.wikiSyncError ? " wiki-error" : t.processingMode === "pending" ? " wiki-pending" : "";
+  div.className = "card" + (t.read ? " read" : "") + wikiClass + (batchMode ? " batch" : "");
   div.dataset.id = t.id;
+  const wikiEnabled = !!wikiConfig?.enabled;
   div.innerHTML = `
     <div class="card-head">
       <span class="author">${esc(t.author?.name || "未知作者")}</span>
@@ -72,6 +89,9 @@ function tweetCard(t) {
       <span class="date">${esc(date)}</span>
       ${contentTypeBadge(t.contentType)}
       ${natureBadge(t.nature)}
+      ${t.wikiSynced ? `<span class="wiki-badge synced" title="已同步到 LLM Wiki${t.wikiPageUrl ? "：" + esc(t.wikiPageUrl) : ""}">🧠</span>` : ""}
+      ${!t.wikiSynced && t.processingMode === "pending" ? `<span class="wiki-badge pending" title="AI 判定为深度内容，待确认推送">⏳</span>` : ""}
+      ${t.wikiSyncError ? `<span class="wiki-badge error" title="同步失败：${esc(t.wikiSyncError)}">⚠</span>` : ""}
     </div>
     <div class="summary">${esc(t.summary || (t.content || "").slice(0, 80))}</div>
     ${t.content ? `<div class="fulltext${t.contentType === "文章" ? "" : " hidden"}">${esc(t.content)}</div>` : ""}
@@ -86,9 +106,14 @@ function tweetCard(t) {
       ${t.content ? `<button class="fulltext-btn">${t.contentType === "文章" ? "收起全文" : "展开全文"}</button>` : ""}
       <button class="note-btn" title="备注">备注</button>
       <button class="read-btn${t.read ? " done" : ""}" title="切换已读状态">${t.read ? "已读" : "未读"}</button>
+      ${wikiEnabled && !t.wikiSynced && t.processingMode !== "pending" ? `<button class="wiki-btn" title="存入 LLM Wiki 知识库">🧠 存知识库</button>` : ""}
+      ${wikiEnabled && t.processingMode === "pending" ? `<button class="wiki-confirm-btn" title="确认推送到 LLM Wiki">✅ 推送</button><button class="wiki-reject-btn" title="保持轻量模式">❌</button>` : ""}
       <button class="delete-btn" data-id="${esc(t.id)}" title="删除">✕</button>
       <a class="origin-link" href="${esc(t.url)}" target="_blank" rel="noopener">原文 ↗</a>
-    </div>`;
+    </div>
+    <label class="card-select${batchMode ? "" : " hidden"}" title="选择">
+      <input type="checkbox" class="batch-checkbox" data-id="${esc(t.id)}"${selectedIds.has(t.id) ? " checked" : ""}>
+    </label>`;
 
   div.querySelector(".delete-btn").addEventListener("click", async (e) => {
     await send({ action: "deleteTweet", tweetId: e.target.dataset.id });
@@ -129,6 +154,35 @@ function tweetCard(t) {
   // 打开原文时自动标记已读
   div.querySelector(".origin-link").addEventListener("click", () => {
     if (!t.read) send({ action: "markRead", tweetId: t.id, read: true });
+  });
+
+  // 单条「存知识库」/ smart 模式确认推送
+  const pushWiki = async () => {
+    showToast(`正在同步「${(t.summary || t.content || "").slice(0, 20)}…」到 LLM Wiki`, 6000);
+    const r = await send({ action: "syncToWiki", tweetId: t.id });
+    showToast(r?.success ? "✓ 已同步到 LLM Wiki" : `✗ 同步失败：${r?.error || "未知错误"}`);
+  };
+  div.querySelector(".wiki-btn")?.addEventListener("click", pushWiki);
+  div.querySelector(".wiki-confirm-btn")?.addEventListener("click", pushWiki);
+
+  // smart 模式拒绝推送：保持轻量
+  div.querySelector(".wiki-reject-btn")?.addEventListener("click", async () => {
+    const r = await send({
+      action: "updateWikiStatus",
+      tweetId: t.id,
+      status: { processingMode: "light", wikiSyncError: null },
+    });
+    if (r?.success) {
+      t.processingMode = "light";
+      renderActiveView();
+    }
+  });
+
+  // 批量模式复选框
+  div.querySelector(".batch-checkbox")?.addEventListener("change", (e) => {
+    if (e.target.checked) selectedIds.add(t.id);
+    else selectedIds.delete(t.id);
+    updateBatchCount();
   });
   return div;
 }
@@ -262,6 +316,31 @@ function renderKanban() {
   }
 }
 
+// ==================== 批量模式（推送到 LLM Wiki） ====================
+
+function toggleBatchMode(enabled) {
+  batchMode = enabled;
+  selectedIds.clear();
+  $("batchToolbar").classList.toggle("hidden", !enabled);
+  updateBatchCount();
+  renderActiveView(); // 重渲染以显示/隐藏卡片复选框
+}
+
+function updateBatchCount() {
+  $("batchCount").textContent = selectedIds.size;
+  $("batchWikiBtn").disabled = selectedIds.size === 0;
+}
+
+async function batchPushToWiki() {
+  if (!selectedIds.size) return;
+  const ids = Array.from(selectedIds);
+  showToast(`开始批量同步 ${ids.length} 条…`, 6000);
+  const r = await send({ action: "batchSyncToWiki", tweetIds: ids });
+  if (!r?.success) showToast(`✗ 批量同步失败：${r?.error || "未知错误"}`);
+  toggleBatchMode(false);
+  // 进度与结果通过 wikiSyncProgress / wikiSyncDone 广播更新
+}
+
 // ==================== 视图切换与事件 ====================
 
 function renderActiveView() {
@@ -299,6 +378,17 @@ function initToolbar() {
   });
 
   $("settingsBtn").addEventListener("click", () => send({ action: "openOptions" }));
+
+  // 批量模式
+  $("batchBtn").addEventListener("click", () => {
+    if (!wikiConfig?.enabled) {
+      showToast("请先在设置页启用 LLM Wiki 深度模式");
+      return;
+    }
+    toggleBatchMode(!batchMode);
+  });
+  $("batchCancelBtn").addEventListener("click", () => toggleBatchMode(false));
+  $("batchWikiBtn").addEventListener("click", batchPushToWiki);
 
   $("reclassifyBtn").addEventListener("click", async (e) => {
     const btn = e.target;
@@ -372,13 +462,30 @@ chrome.runtime.onMessage.addListener((message) => {
     }
   } else if (message.action === "scrapeComplete") {
     reload();
+  } else if (message.action === "wikiSyncProgress") {
+    if (message.finished) {
+      if (message.total === 0) reload(); // 队列跑完，刷新显示最终同步状态
+    } else if (message.total > 1) {
+      showToast(`LLM Wiki 同步进度：${message.done}/${message.total}`, 4000);
+    }
+  } else if (message.action === "wikiSyncDone") {
+    // 同步完成（成功/失败）：就地更新卡片状态
+    const idx = tweets.findIndex((t) => t.id === message.tweet?.id);
+    if (idx >= 0) {
+      tweets[idx] = message.tweet;
+      renderActiveView();
+    }
   }
 });
 
 // ==================== 启动 ====================
 
 initToolbar();
-reload();
-send({ action: "getProgress" }).then((r) => {
-  if (r?.total) showProgress(r.done, r.total);
-});
+(async () => {
+  const r = await send({ action: "getWikiConfig" }); // 先拿 Wiki 配置，决定卡片是否渲染 Wiki 按钮
+  wikiConfig = r?.config || null;
+  reload();
+  send({ action: "getProgress" }).then((p) => {
+    if (p?.total) showProgress(p.done, p.total);
+  });
+})();

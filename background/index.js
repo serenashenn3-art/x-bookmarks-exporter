@@ -7,10 +7,12 @@
 import { DEFAULT_CLASSIFICATION } from "../lib/constants.js";
 import { buildClassificationPrompt, buildGroupSummaryPrompt, extractJson, normalizeClassification } from "../lib/prompt.js";
 import { callAI, testConnection, normalizeAiConfig } from "../lib/ai-providers.js";
+import { WikiAPI, routeProcessingMode } from "../lib/wiki-api.js";
 import { buildExport } from "../lib/export.js";
 import { stripOembedHtml, matchesRead } from "../lib/media.js";
 import {
   getAiConfig,
+  getWikiConfig,
   getAllTweets,
   getTweet,
   saveTweets,
@@ -21,7 +23,9 @@ import {
 } from "../lib/storage.js";
 
 const QUEUE_KEY = "xb_queue_state";
+const WIKI_QUEUE_KEY = "xb_wiki_queue";
 const CLASSIFY_INTERVAL_MS = 500;
+const WIKI_SYNC_INTERVAL_MS = 300; // 批量推送间隔，防 Wiki 服务过载
 const OEMBED_BASE = "https://publish.twitter.com/oembed?url=";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -267,7 +271,9 @@ async function classifyOne(id) {
     });
     const patch = normalizeClassification(extractJson(text), tweet);
     const updated = await updateTweet(id, patch);
-    broadcast({ action: "tweetClassified", tweet: updated });
+    // 分类完成 → 按 Wiki 分流策略决定 light / pending / deep
+    await applyWikiRouting(updated);
+    broadcast({ action: "tweetClassified", tweet: await getTweet(id) });
   } catch (e) {
     const updated = await updateTweet(id, {
       ...DEFAULT_CLASSIFICATION,
@@ -276,6 +282,129 @@ async function classifyOne(id) {
       classifyError: e.message,
     });
     broadcast({ action: "tweetClassified", tweet: updated });
+  }
+}
+
+// ==================== LLM Wiki 同步（队列持久化，SW 终止可恢复） ====================
+
+let wikiQueue = []; // 待推送推文 id
+let wikiQueueTotal = 0;
+let wikiProcessing = false;
+
+async function persistWikiQueue() {
+  const state = { queue: wikiQueue, total: wikiQueueTotal };
+  try {
+    await chrome.storage.session.set({ [WIKI_QUEUE_KEY]: state });
+  } catch {
+    await chrome.storage.local.set({ [WIKI_QUEUE_KEY]: state });
+  }
+}
+
+async function restoreWikiQueue() {
+  let state = null;
+  try {
+    const r = await chrome.storage.session.get(WIKI_QUEUE_KEY);
+    state = r[WIKI_QUEUE_KEY];
+  } catch { /* fallback */ }
+  if (!state) {
+    const r = await chrome.storage.local.get(WIKI_QUEUE_KEY);
+    state = r[WIKI_QUEUE_KEY];
+    if (state) await chrome.storage.local.remove(WIKI_QUEUE_KEY);
+  }
+  if (state?.queue?.length) {
+    wikiQueue = state.queue;
+    wikiQueueTotal = state.total || wikiQueue.length;
+    processWikiQueue().catch(() => {});
+  }
+}
+
+async function clearPersistedWikiQueue() {
+  try {
+    await chrome.storage.session.remove(WIKI_QUEUE_KEY);
+  } catch { /* ignore */ }
+  await chrome.storage.local.remove(WIKI_QUEUE_KEY).catch(() => {});
+}
+
+async function enqueueWiki(tweetIds) {
+  const inQueue = new Set(wikiQueue);
+  const fresh = tweetIds.filter((id) => !inQueue.has(id));
+  if (!fresh.length) return 0;
+  wikiQueue.push(...fresh);
+  wikiQueueTotal += fresh.length;
+  await persistWikiQueue();
+  processWikiQueue().catch(() => {});
+  return fresh.length;
+}
+
+/**
+ * 推送单条到 LLM Wiki，返回 { success, error? }。
+ * 重复推送按 ID 去重（已同步的跳过）；失败把原因写入 wikiSyncError 供卡片展示与重试。
+ */
+async function syncOneToWiki(id) {
+  const tweet = await getTweet(id);
+  if (!tweet) return { success: false, error: "推文不存在" };
+  if (tweet.wikiSynced) return { success: true, skipped: true };
+  const cfg = await getWikiConfig();
+  if (!cfg.enabled) return { success: false, error: "LLM Wiki 未启用" };
+  try {
+    const { pageUrl } = await new WikiAPI(cfg.baseUrl).pushPage(tweet);
+    const updated = await updateTweet(id, {
+      wikiSynced: true,
+      wikiPageUrl: pageUrl,
+      wikiSyncError: null,
+      processingMode: "deep",
+    });
+    broadcast({ action: "wikiSyncDone", tweet: updated });
+    return { success: true };
+  } catch (e) {
+    const updated = await updateTweet(id, { wikiSyncError: e.message, processingMode: "deep" });
+    broadcast({ action: "wikiSyncDone", tweet: updated });
+    return { success: false, error: e.message };
+  }
+}
+
+async function processWikiQueue() {
+  if (wikiProcessing) return;
+  wikiProcessing = true;
+  const keepAlive = setInterval(() => {
+    chrome.runtime.getPlatformInfo(() => void chrome.runtime.lastError);
+  }, 20000);
+  try {
+    while (wikiQueue.length) {
+      const id = wikiQueue[0];
+      broadcast({ action: "wikiSyncProgress", done: wikiQueueTotal - wikiQueue.length, total: wikiQueueTotal });
+      try {
+        await syncOneToWiki(id);
+      } catch (e) {
+        console.error("syncOneToWiki failed:", id, e); // 单条异常不阻塞队列
+      }
+      wikiQueue.shift();
+      await persistWikiQueue();
+      broadcast({ action: "wikiSyncProgress", done: wikiQueueTotal - wikiQueue.length, total: wikiQueueTotal });
+      if (wikiQueue.length) await sleep(WIKI_SYNC_INTERVAL_MS);
+    }
+  } finally {
+    clearInterval(keepAlive);
+    wikiProcessing = false;
+    if (!wikiQueue.length) {
+      wikiQueueTotal = 0;
+      await clearPersistedWikiQueue();
+      broadcast({ action: "wikiSyncProgress", done: 0, total: 0, finished: true });
+    }
+  }
+}
+
+/** 分类完成后的分流：pending 等用户确认；deep 直接入同步队列；light 不动 */
+async function applyWikiRouting(tweet) {
+  if (!tweet) return;
+  const cfg = await getWikiConfig();
+  const mode = routeProcessingMode(tweet, cfg);
+  if (mode === "light") return;
+  if (mode === "pending") {
+    await updateTweet(tweet.id, { processingMode: "pending" });
+  } else {
+    await updateTweet(tweet.id, { processingMode: "deep" });
+    await enqueueWiki([tweet.id]);
   }
 }
 
@@ -393,7 +522,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     },
     updateTweetAction: async () => {
       const updated = await updateTweet(message.tweetId, { action: message.newAction });
-      return updated ? { success: true, tweet: updated } : { success: false, error: "推文不存在" };
+      if (!updated) return { success: false, error: "推文不存在" };
+      // 看板列自动触发：拖入配置的列且未同步时，自动推送到 LLM Wiki
+      const cfg = await getWikiConfig();
+      if (cfg.enabled && cfg.autoActions.includes(updated.action) && !updated.wikiSynced) {
+        await updateTweet(updated.id, { processingMode: "deep", wikiSyncError: null });
+        await enqueueWiki([updated.id]);
+      }
+      return { success: true, tweet: await getTweet(message.tweetId) };
     },
     reclassify: async () => {
       const ids = message.tweetIds || (await getAllTweets()).map((t) => t.id);
@@ -412,6 +548,28 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const config = normalizeAiConfig(message.config || {});
       return testConnection(config);
     },
+    // === LLM Wiki ===
+    getWikiConfig: async () => ({ success: true, config: await getWikiConfig() }),
+    testWikiConnection: async () => {
+      const cfg = await getWikiConfig();
+      return new WikiAPI(message.baseUrl || cfg.baseUrl).testConnection();
+    },
+    syncToWiki: () => syncOneToWiki(message.tweetId), // 单条：等待结果返回
+    batchSyncToWiki: async () => ({ success: true, queued: await enqueueWiki(message.tweetIds || []) }),
+    updateWikiStatus: async () => {
+      // 仅允许修改 Wiki 相关字段（如 smart 模式拒绝推送：processingMode → light）
+      const allow = ["processingMode", "wikiSynced", "wikiPageUrl", "wikiSyncError"];
+      const patch = {};
+      for (const k of allow) if (k in (message.status || {})) patch[k] = message.status[k];
+      const updated = await updateTweet(message.tweetId, patch);
+      return updated ? { success: true, tweet: updated } : { success: false, error: "推文不存在" };
+    },
+    getWikiProgress: async () => ({
+      success: true,
+      done: wikiQueueTotal - wikiQueue.length,
+      total: wikiQueueTotal,
+      processing: wikiProcessing,
+    }),
     openOptions: async () => {
       chrome.runtime.openOptionsPage();
       return { success: true };
@@ -432,4 +590,4 @@ chrome.runtime.onInstalled.addListener(({ reason }) => {
   if (reason === "install") chrome.runtime.openOptionsPage();
 });
 
-migrateLegacy().then(() => restoreQueue()).catch(() => {});
+migrateLegacy().then(() => restoreQueue()).then(() => restoreWikiQueue()).catch(() => {});

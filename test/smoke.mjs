@@ -9,6 +9,14 @@ import { buildClassificationPrompt, buildGroupSummaryPrompt, extractJson, normal
 import { PROVIDERS, normalizeAiConfig, buildRequest, parseResponse } from "../lib/ai-providers.js";
 import { toMarkdown, toObsidian, toCSV, toJSON, buildExport } from "../lib/export.js";
 import { stripOembedHtml, upgradeImageUrl, detectContentType, matchesRead } from "../lib/media.js";
+import {
+  normalizeWikiConfig,
+  isDeepContent,
+  routeProcessingMode,
+  buildWikiPagePayload,
+  WIKI_MAX_CONTENT_LENGTH,
+} from "../lib/wiki-api.js";
+import { DEFAULT_WIKI_CONFIG } from "../lib/constants.js";
 
 let passed = 0;
 const t = (name, fn) => {
@@ -342,6 +350,63 @@ t("去重: Map 判重逻辑", () => {
   const incoming = [{ id: "1" }, { id: "2" }, { id: "1" }, { id: "3" }];
   const fresh = incoming.filter((x) => !scrapedIds.has(x.id) && (scrapedIds.set(x.id, true), true));
   assert.deepEqual(fresh.map((x) => x.id), ["1", "2", "3"]);
+});
+
+// ---------- LLM Wiki：配置归一化 ----------
+t("normalizeWikiConfig: 空输入给默认配置", () => {
+  assert.deepEqual(normalizeWikiConfig(null), { ...DEFAULT_WIKI_CONFIG });
+  assert.equal(normalizeWikiConfig(undefined).enabled, false);
+  assert.equal(normalizeWikiConfig({}).baseUrl, "http://127.0.0.1:19828");
+});
+t("normalizeWikiConfig: 非法值回退、合法值保留", () => {
+  const c = normalizeWikiConfig({
+    enabled: true,
+    baseUrl: "http://localhost:9999/",
+    autoSync: "smart",
+    deepNatures: ["深度线程", "不存在"],
+    minTextLength: 50, // 低于下限
+    autoActions: ["待研究"],
+  });
+  assert.equal(c.enabled, true);
+  assert.equal(c.baseUrl, "http://localhost:9999"); // 尾部斜杠被去掉
+  assert.equal(c.autoSync, "smart");
+  assert.deepEqual(c.deepNatures, ["深度线程"]);
+  assert.equal(c.minTextLength, 100); // clamp 到下限
+  assert.deepEqual(c.autoActions, ["待研究"]);
+  assert.equal(normalizeWikiConfig({ autoSync: "乱填" }).autoSync, "manual");
+});
+
+// ---------- LLM Wiki：深度判定与分流 ----------
+const deepByNature = { nature: "深度线程", content: "短" };
+const deepByLength = { nature: "新闻快讯", content: "长".repeat(600) };
+const lightTweet = { nature: "新闻快讯", content: "短内容" };
+t("isDeepContent: Nature 命中或长度超阈值", () => {
+  assert.ok(isDeepContent(deepByNature, DEFAULT_WIKI_CONFIG));
+  assert.ok(isDeepContent(deepByLength, DEFAULT_WIKI_CONFIG));
+  assert.ok(!isDeepContent(lightTweet, DEFAULT_WIKI_CONFIG));
+});
+t("routeProcessingMode: 四种策略路径", () => {
+  const base = { ...DEFAULT_WIKI_CONFIG, enabled: true };
+  assert.equal(routeProcessingMode(deepByNature, { ...base, autoSync: "manual" }), "light");
+  assert.equal(routeProcessingMode(deepByNature, { ...base, autoSync: "smart" }), "pending");
+  assert.equal(routeProcessingMode(deepByNature, { ...base, autoSync: "auto" }), "deep");
+  assert.equal(routeProcessingMode(lightTweet, { ...base, autoSync: "auto" }), "light");
+  assert.equal(routeProcessingMode(deepByNature, { ...base, enabled: false }), "light");
+});
+
+// ---------- LLM Wiki：推送载荷 ----------
+t("buildWikiPagePayload: 字段齐全、externalId 为字符串", () => {
+  const p = buildWikiPagePayload(tweets[0]);
+  assert.equal(p.source, "x-bookmarks-exporter");
+  assert.equal(p.externalId, "111");
+  assert.equal(p.url, "https://x.com/alice/status/111");
+  assert.deepEqual(p.tags, ["llm", "开源"]);
+  assert.equal(p.title, "推荐一个 LLM 工具");
+});
+t("buildWikiPagePayload: 超长正文截断", () => {
+  const p = buildWikiPagePayload({ id: "9", content: "x".repeat(WIKI_MAX_CONTENT_LENGTH + 100) });
+  assert.ok(p.content.length <= WIKI_MAX_CONTENT_LENGTH + 20);
+  assert.ok(p.content.includes("已截断"));
 });
 
 console.log(`\n全部通过：${passed} 项`);

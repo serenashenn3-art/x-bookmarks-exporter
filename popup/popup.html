@@ -35,10 +35,16 @@
       <button class="export-btn" data-format="json">JSON</button>
       <button class="export-btn" data-format="csv">CSV</button>
       <button id="reclassifyBtn" title="对全部书签重新运行 AI 分类">重分类</button>
+      <button id="batchBtn" title="批量选择并推送到 LLM Wiki">批量</button>
       <button id="clearAllBtn" title="删除所有书签（不可恢复）">清空全部</button>
       <span id="count" class="count"></span>
     </div>
     <div id="progress" class="progress hidden"></div>
+    <div id="batchToolbar" class="toolbar-batch hidden">
+      <span class="batch-count">已选 <b id="batchCount">0</b> 条</span>
+      <button id="batchWikiBtn" class="btn-batch" disabled>🧠 推送到 LLM Wiki</button>
+      <button id="batchCancelBtn" class="btn-batch btn-secondary">取消</button>
+    </div>
   </header>
 
   <nav id="tabs">
@@ -68,5 +74,6 @@
   </main>
 
   <script type="module" src="popup.js"></script>
+  <div id="toast" class="toast hidden"></div>
 </body>
 </html>

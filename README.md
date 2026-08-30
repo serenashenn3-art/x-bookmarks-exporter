@@ -29,6 +29,7 @@ https://github.com/user-attachments/assets/c669b14b-ac60-40fe-8a3b-808941182870
 - **Notes & Read status**: Write notes on each bookmark (exported as callouts), mark read/unread with filtering, and auto-mark as read when clicking "Original".
 - **Multi-format export**: Export visible content filtered by current search as Markdown / Obsidian (YAML frontmatter + tags + callouts + embedded images) / JSON / CSV.
 - **Data management**: Delete single items, re-classify (re-run with new AI), and clear all (with confirmation).
+- **LLM Wiki deep mode (optional)**: Point the options page at a local LLM Wiki server (default `http://127.0.0.1:19828`) to sync deep content into a knowledge base. Three routing strategies — manual (push by hand), smart (AI-flagged deep content awaits your ⏳ confirmation), auto (deep content pushed automatically); deep content is detected by content nature or a configurable text-length threshold. Dragging a card into configured Kanban columns (e.g. Research / Citable) triggers sync automatically; cards show 🧠 synced / ⏳ pending / ⚠ failed badges, and batch selection + push is supported (serial with progress, queue persists across restarts). Disabled by default — the extension works fully in lightweight mode without it.
 
 **中文：**
 
@@ -41,6 +42,7 @@ https://github.com/user-attachments/assets/c669b14b-ac60-40fe-8a3b-808941182870
 - **批注与已读**：每条书签可写备注（callout 导出）、可标记已读/未读并筛选，点「原文」自动标记已读。
 - **多格式导出**：按当前搜索筛选条件导出可见内容为 Markdown / Obsidian（YAML frontmatter + 标签 + callout + 图片内嵌）/ JSON / CSV。
 - **数据管理**：单条删除、重分类（换 AI 后一键重跑）、清空全部（二次确认）。
+- **LLM Wiki 深度模式（可选）**：在设置页配置本地 LLM Wiki 服务（默认 `http://127.0.0.1:19828`）后，可将深度内容同步到知识库。支持 manual / smart / auto 三种分流策略：深度判定（按内容性质或正文长度阈值）后分别走手动推送、⏳ 待确认、自动推送；看板拖入「待研究 / 可引用」等指定列自动触发同步；列表卡片显示 🧠 已同步 / ⏳ 待确认 / ⚠ 同步失败角标，支持批量选择推送（串行 + 进度提示，队列持久化可断点续跑）。不启用时扩展保持纯轻量模式，不影响原有功能。
 
 ---
 

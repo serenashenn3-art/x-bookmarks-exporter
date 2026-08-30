@@ -22,6 +22,21 @@
     #status.ok { color: #22a06b; }
     #status.err { color: #ef4444; }
     .hidden { display: none; }
+    /* === LLM Wiki 配置区域 === */
+    .wiki-section { margin-top: 28px; padding-top: 16px; border-top: 1px solid #e5e7eb; }
+    .wiki-section h2 { font-size: 16px; margin-bottom: 4px; }
+    .wiki-section .desc { font-size: 12px; color: #6b7280; margin-bottom: 12px; }
+    .toggle-label { display: flex; align-items: center; gap: 8px; font-weight: 600; cursor: pointer; }
+    .toggle-label input { width: auto; }
+    .radio-group label, .checkbox-group label { display: block; font-weight: 400; margin-bottom: 4px; }
+    .radio-group input, .checkbox-group input { width: auto; margin-right: 6px; }
+    #wikiSettings input[type="text"], #wikiSettings input[type="number"] {
+      width: 100%; padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 14px;
+    }
+    #testWikiBtn { background: #fff; color: #1d9bf0; border: 1px solid #1d9bf0; margin-top: 6px; }
+    #wikiStatus { font-size: 13px; margin-left: 8px; }
+    #wikiStatus.ok { color: #22a06b; }
+    #wikiStatus.err { color: #ef4444; }
   </style>
 </head>
 <body>
@@ -55,6 +70,60 @@
     <button id="testBtn">测试连接</button>
     <span id="status"></span>
   </div>
+
+  <!-- === LLM Wiki 深度知识库配置（可选） === -->
+  <section class="wiki-section">
+    <h2>📚 LLM Wiki 深度知识库（可选）</h2>
+    <p class="desc">将深度内容同步到本地 LLM Wiki，实现知识关联、主题聚合、持续维护。不启用时扩展保持轻量模式，不影响原有功能。</p>
+
+    <div class="field">
+      <label class="toggle-label">
+        <input type="checkbox" id="wikiEnabled">
+        <span>启用 LLM Wiki 深度模式</span>
+      </label>
+    </div>
+
+    <div id="wikiSettings" class="hidden">
+      <div class="field">
+        <label for="wikiBaseUrl">本地服务地址</label>
+        <input type="text" id="wikiBaseUrl" placeholder="http://127.0.0.1:19828">
+        <div class="row" style="margin-top: 6px;">
+          <button type="button" id="testWikiBtn">测试连接</button>
+          <span id="wikiStatus"></span>
+        </div>
+        <div class="hint">修改为非默认地址/端口时，浏览器会请求该域名的访问权限。</div>
+      </div>
+
+      <div class="field">
+        <label>分流策略</label>
+        <div class="radio-group">
+          <label><input type="radio" name="wikiAutoSync" value="manual"> 全部轻量，手动选择深度</label>
+          <label><input type="radio" name="wikiAutoSync" value="smart"> 智能推荐，我确认后推送</label>
+          <label><input type="radio" name="wikiAutoSync" value="auto"> 自动推送深度内容</label>
+        </div>
+        <div class="hint">手动：全部走轻量，你手动点「存入知识库」；智能：判定为深度内容的标记 ⏳ 待确认；自动：深度内容直接推送。</div>
+      </div>
+
+      <div class="field">
+        <label>自动判定为深度的内容性质</label>
+        <div class="checkbox-group" id="wikiDeepNatures"></div>
+      </div>
+
+      <div class="field">
+        <label for="wikiMinTextLength">内容长度阈值（字符）</label>
+        <input type="number" id="wikiMinTextLength" min="100" max="5000" step="50">
+        <div class="hint">正文超过此长度的内容自动判定为深度。</div>
+      </div>
+
+      <div class="field">
+        <label>看板列自动触发同步</label>
+        <div class="checkbox-group" id="wikiAutoActions"></div>
+        <div class="hint">将卡片拖到这些列时，未同步的自动推送到 LLM Wiki。</div>
+      </div>
+
+      <div class="hint">以上 Wiki 配置修改后自动保存。</div>
+    </div>
+  </section>
 
   <script type="module" src="options.js"></script>
 </body>

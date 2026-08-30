@@ -3,7 +3,9 @@
  */
 
 import { PROVIDERS, normalizeAiConfig } from "../lib/ai-providers.js";
-import { AI_CONFIG_KEY } from "../lib/storage.js";
+import { AI_CONFIG_KEY, WIKI_CONFIG_KEY } from "../lib/storage.js";
+import { NATURES, ACTIONS, DEFAULT_WIKI_CONFIG } from "../lib/constants.js";
+import { WikiAPI, normalizeWikiConfig } from "../lib/wiki-api.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -115,4 +117,88 @@ async function init() {
   });
 }
 
+// ==================== LLM Wiki 配置 ====================
+
+/** 动态渲染 Nature / 看板列复选框 */
+function fillWikiCheckboxes() {
+  const mk = (container, value, label) => {
+    const el = document.createElement("label");
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.value = value;
+    el.append(cb, document.createTextNode(label));
+    container.appendChild(el);
+  };
+  for (const n of NATURES) mk($("wikiDeepNatures"), n, n);
+  for (const a of ACTIONS) mk($("wikiAutoActions"), a, a);
+}
+
+function readWikiForm() {
+  const checked = (id) =>
+    Array.from($(`${id}`).querySelectorAll("input:checked")).map((cb) => cb.value);
+  return normalizeWikiConfig({
+    enabled: $("wikiEnabled").checked,
+    baseUrl: $("wikiBaseUrl").value,
+    autoSync: document.querySelector('input[name="wikiAutoSync"]:checked')?.value,
+    deepNatures: checked("wikiDeepNatures"),
+    minTextLength: $("wikiMinTextLength").value,
+    autoActions: checked("wikiAutoActions"),
+  });
+}
+
+async function saveWiki() {
+  await chrome.storage.sync.set({ [WIKI_CONFIG_KEY]: readWikiForm() });
+}
+
+/** 非默认 Wiki 地址时按需申请 optional host 权限 */
+async function ensureWikiHostPermission(baseUrl) {
+  if (baseUrl === DEFAULT_WIKI_CONFIG.baseUrl) return true;
+  try {
+    const origin = new URL(baseUrl).origin + "/*";
+    return await chrome.permissions.request({ origins: [origin] });
+  } catch {
+    return false;
+  }
+}
+
+function setWikiStatus(text, ok) {
+  const el = $("wikiStatus");
+  el.textContent = text;
+  el.className = ok === null ? "" : ok ? "ok" : "err";
+}
+
+async function initWiki() {
+  fillWikiCheckboxes();
+  const r = await chrome.storage.sync.get(WIKI_CONFIG_KEY);
+  const cfg = normalizeWikiConfig(r[WIKI_CONFIG_KEY]);
+
+  $("wikiEnabled").checked = cfg.enabled;
+  $("wikiSettings").classList.toggle("hidden", !cfg.enabled);
+  $("wikiBaseUrl").value = cfg.baseUrl;
+  const radio = document.querySelector(`input[name="wikiAutoSync"][value="${cfg.autoSync}"]`);
+  if (radio) radio.checked = true;
+  $("wikiMinTextLength").value = cfg.minTextLength;
+  for (const cb of $("wikiDeepNatures").querySelectorAll("input")) cb.checked = cfg.deepNatures.includes(cb.value);
+  for (const cb of $("wikiAutoActions").querySelectorAll("input")) cb.checked = cfg.autoActions.includes(cb.value);
+
+  // 修改即自动保存
+  $("wikiEnabled").addEventListener("change", () => {
+    $("wikiSettings").classList.toggle("hidden", !$("wikiEnabled").checked);
+    saveWiki();
+  });
+  $("wikiSettings").addEventListener("change", saveWiki);
+
+  $("testWikiBtn").addEventListener("click", async () => {
+    setWikiStatus("测试中…", null);
+    const cfg = readWikiForm();
+    if (!(await ensureWikiHostPermission(cfg.baseUrl))) {
+      setWikiStatus("✗ 该地址的域名权限被拒绝", false);
+      return;
+    }
+    const r = await new WikiAPI(cfg.baseUrl).testConnection();
+    setWikiStatus(r.ok ? `✓ 已连接（LLM Wiki v${r.version}）` : `✗ ${r.error}`, r.ok);
+  });
+}
+
 init();
+initWiki();
