@@ -366,6 +366,7 @@ t("normalizeWikiConfig: 非法值回退、合法值保留", () => {
     deepNatures: ["深度线程", "不存在"],
     minTextLength: 50, // 低于下限
     autoActions: ["待研究"],
+    sink: "obsidian",
   });
   assert.equal(c.enabled, true);
   assert.equal(c.baseUrl, "http://localhost:9999"); // 尾部斜杠被去掉
@@ -373,7 +374,9 @@ t("normalizeWikiConfig: 非法值回退、合法值保留", () => {
   assert.deepEqual(c.deepNatures, ["深度线程"]);
   assert.equal(c.minTextLength, 100); // clamp 到下限
   assert.deepEqual(c.autoActions, ["待研究"]);
+  assert.equal(c.sink, "obsidian");
   assert.equal(normalizeWikiConfig({ autoSync: "乱填" }).autoSync, "manual");
+  assert.equal(normalizeWikiConfig(null).sink, ""); // 缺省走桥接默认 sink
 });
 
 // ---------- LLM Wiki：深度判定与分流 ----------

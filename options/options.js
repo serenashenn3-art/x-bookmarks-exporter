@@ -143,6 +143,7 @@ function readWikiForm() {
     deepNatures: checked("wikiDeepNatures"),
     minTextLength: $("wikiMinTextLength").value,
     autoActions: checked("wikiAutoActions"),
+    sink: $("wikiSink").value,
   });
 }
 
@@ -167,6 +168,21 @@ function setWikiStatus(text, ok) {
   el.className = ok === null ? "" : ok ? "ok" : "err";
 }
 
+/** 从桥接服务拉取 sink 列表填充下拉框（服务不可达时静默保持现状） */
+async function refreshWikiSinks(baseUrl, selected) {
+  const sinks = await new WikiAPI(baseUrl).listSinks();
+  if (!sinks.length) return;
+  const sel = $("wikiSink");
+  sel.innerHTML = '<option value="">桥接默认</option>';
+  for (const s of sinks) {
+    const opt = document.createElement("option");
+    opt.value = s.id;
+    opt.textContent = (s.label || s.id) + (s.default ? "（默认）" : "");
+    sel.appendChild(opt);
+  }
+  if (selected && sinks.some((s) => s.id === selected)) sel.value = selected;
+}
+
 async function initWiki() {
   fillWikiCheckboxes();
   const r = await chrome.storage.sync.get(WIKI_CONFIG_KEY);
@@ -180,6 +196,8 @@ async function initWiki() {
   $("wikiMinTextLength").value = cfg.minTextLength;
   for (const cb of $("wikiDeepNatures").querySelectorAll("input")) cb.checked = cfg.deepNatures.includes(cb.value);
   for (const cb of $("wikiAutoActions").querySelectorAll("input")) cb.checked = cfg.autoActions.includes(cb.value);
+  $("wikiSink").value = cfg.sink;
+  refreshWikiSinks(cfg.baseUrl, cfg.sink); // 服务在线则填充真实 sink 列表
 
   // 修改即自动保存
   $("wikiEnabled").addEventListener("change", () => {
@@ -197,6 +215,7 @@ async function initWiki() {
     }
     const r = await new WikiAPI(cfg.baseUrl).testConnection();
     setWikiStatus(r.ok ? `✓ 已连接（LLM Wiki v${r.version}）` : `✗ ${r.error}`, r.ok);
+    if (r.ok) refreshWikiSinks(cfg.baseUrl, $("wikiSink").value);
   });
 }
 

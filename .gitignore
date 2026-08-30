@@ -25,3 +25,7 @@ build/
 # Logs
 *.log
 npm-debug.log*
+
+# Wiki 桥：真实配置（含 API key）与运行数据不提交
+bridge/config.json
+bridge/data/

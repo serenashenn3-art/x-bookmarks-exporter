@@ -1,0 +1,27 @@
+{
+  "port": 19828,
+  "sinks": [
+    {
+      "id": "obsidian",
+      "label": "Obsidian · X 书签知识库",
+      "type": "markdown",
+      "path": "~/Documents/Obsidian Vault/X 书签知识库",
+      "default": true,
+      "autoIngest": false,
+      "wikiDir": "~/Documents/Obsidian Vault/wiki"
+    },
+    {
+      "id": "logseq",
+      "label": "Logseq · pages",
+      "type": "markdown",
+      "path": "~/Documents/logseq/pages",
+      "autoIngest": false,
+      "wikiDir": "~/Documents/logseq/wiki"
+    }
+  ],
+  "llm": {
+    "provider": "minimax",
+    "model": "",
+    "key": ""
+  }
+}

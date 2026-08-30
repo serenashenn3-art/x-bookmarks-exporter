@@ -240,14 +240,30 @@ x-bookmark-ai/
 ├── popup/
 │   ├── popup.html/css/js    Library UI: search/filter/sort + List/Summary/Board three views + live progress
 ├── options/
-│   ├── options.html/js      Settings page: provider selection, API Key, model, custom Base URL, test connection
+│   ├── options.html/js      Settings page: provider selection, API Key, model, custom Base URL,
+│                              test connection, LLM Wiki config (routing strategy, sink selection)
+├── bridge/
+│   ├── wiki-bridge.mjs      Local Wiki bridge service (optional): receives pushed bookmarks via
+│                              HTTP, writes one Markdown file per entry into any note app's folder
+│                              (Obsidian vault / Logseq graph / plain md dir), optional auto-ingest
+│                              via karpathywiki-cli into a linked wiki; multi-sink, selectable
+│   └── config.example.json  Bridge config template (sinks + LLM for ingest; real config.json is gitignored)
 └── lib/
-    ├── constants.js         Classification dimension enums & defaults
+    ├── constants.js         Classification dimension enums & defaults (incl. LLM Wiki defaults)
     ├── ai-providers.js      8 AI provider adapters (auth/request body/response parsing standardized)
+    ├── wiki-api.js          Wiki bridge client (health/sinks/push, 429 backoff) + deep-content routing
     ├── prompt.js            Unified classification prompt + JSON fault-tolerant parsing
     ├── export.js            Markdown / JSON / CSV generation
     └── storage.js           chrome.storage wrapper (single-key storage + legacy data migration)
 ```
+
+### Wiki Bridge / Wiki 桥（可选）
+
+**English:**
+The extension pushes deep bookmarks to a local bridge service (`node bridge/wiki-bridge.mjs`, default `http://127.0.0.1:19828`). The bridge writes one Markdown file per entry into the folder of your note app — Obsidian vault, Logseq graph, or any plain Markdown directory — so the same content works across note apps. Copy `bridge/config.example.json` to `bridge/config.json` to configure sinks; pick the target sink in the extension's options page (fetched live from the bridge). With `autoIngest: true` and an LLM configured, the bridge also runs [`karpathywiki-cli`](https://github.com/green-dalii/obsidian-llm-wiki-cli) to generate interlinked wiki pages (entities/concepts) for the [Karpathy LLM Wiki Obsidian plugin](https://community.obsidian.md/plugins/karpathywiki).
+
+**中文：**
+扩展把深度书签推送到本地桥接服务（`node bridge/wiki-bridge.mjs`，默认 `http://127.0.0.1:19828`）。桥接把每条内容写成一个 Markdown 文件到你的笔记目录——Obsidian 仓库、Logseq graph 或任意 md 文件夹——同一份内容跨笔记软件通用。复制 `bridge/config.example.json` 为 `bridge/config.json` 配置 sink；在扩展设置页选择推送目标（实时从桥接拉取）。开启 `autoIngest` 并配置 LLM 后，桥接会自动调用 [`karpathywiki-cli`](https://github.com/green-dalii/obsidian-llm-wiki-cli) 生成双链知识页面，配合 [Karpathy LLM Wiki Obsidian 插件](https://community.obsidian.md/plugins/karpathywiki) 实现图谱浏览和对话问答。
 
 ---
 

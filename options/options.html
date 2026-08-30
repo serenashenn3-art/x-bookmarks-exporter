@@ -94,6 +94,14 @@
         <div class="hint">修改为非默认地址/端口时，浏览器会请求该域名的访问权限。</div>
       </div>
 
+      <div class="field" id="wikiSinkField">
+        <label for="wikiSink">推送目标（sink）</label>
+        <select id="wikiSink">
+          <option value="">桥接默认</option>
+        </select>
+        <div class="hint">点「测试连接」成功后自动从桥接服务拉取可选目标；桥接未配置多 sink 时保持默认即可。</div>
+      </div>
+
       <div class="field">
         <label>分流策略</label>
         <div class="radio-group">
