@@ -27,7 +27,7 @@ const CONFIG_PATH = path.join(BRIDGE_DIR, "config.json");
 const DATA_DIR = path.join(BRIDGE_DIR, "data");
 const DB_PATH = path.join(DATA_DIR, "pages.json");
 const INGEST_LOG = path.join(DATA_DIR, "ingest.log");
-const VERSION = "0.4.0";
+const VERSION = "0.5.0";
 
 // ==================== 配置 ====================
 
@@ -107,6 +107,52 @@ function writeMarkdown(p, sink) {
   const file = path.join(sink.path, `${safeName(p.title)}-${p.externalId}.md`);
   fs.writeFileSync(file, md.join("\n"));
   return file;
+}
+
+// ==================== index.md / log.md（Karpathy LLM Wiki 范式） ====================
+// index.md：内容目录，LLM 回答问题时先读它再深入具体页；每次推送后整体重建
+// log.md：时间线日志，统一前缀 `## [日期] ingest | ...`，可用 grep '^## \[' 解析
+
+function appendLog(sink, line) {
+  try {
+    fs.appendFileSync(path.join(sink.path, "log.md"), line + "\n");
+  } catch { /* 目录不可写时静默跳过，不影响主流程 */ }
+}
+
+function rebuildIndex(sink) {
+  try {
+    const wikiDir = sink.wikiDir || path.join(sink.path, "wiki");
+    let concepts = [];
+    try {
+      concepts = fs
+        .readdirSync(wikiDir)
+        .filter((f) => f.endsWith(".md") && !["index.md", "log.md"].includes(f))
+        .map((f) => f.replace(/\.md$/, ""))
+        .sort();
+    } catch { /* 无 wiki 目录 */ }
+    const sources = [...pages.values()].filter((p) => String(p.sinksWritten || "").split(",").includes(sink.id));
+    const lines = [
+      "# 索引（自动生成，请勿手改）",
+      "",
+      "> 每次推送由桥接服务重建。LLM 使用时：先读本文件定位相关页，再深入阅读。",
+      "",
+      `## 概念页（${concepts.length}）`,
+      "",
+      ...concepts.map((n) => `- [[${n}]]`),
+      "",
+      `## 源书签（${sources.length}）`,
+      "",
+      ...sources.map((p) => `- [[${p.title}]] — ${p.author || ""}${p.authorHandle || ""} · ${(p.publishedAt || "").slice(0, 10)} · ${p.category || ""} · ${p.nature || ""}`),
+      "",
+    ];
+    fs.writeFileSync(path.join(sink.path, "index.md"), lines.join("\n"));
+  } catch { /* 索引重建失败不影响主流程 */ }
+}
+
+/** 推送后维护 index/log：log 追加一行，index 整体重建 */
+function trackIngest(sink, p, action) {
+  appendLog(sink, `## [${new Date().toISOString().slice(0, 10)}] ${action} | ${p.title} → ${sink.id}`);
+  rebuildIndex(sink);
 }
 
 // ==================== 内置 LLM ingest（实体抽取 → wiki 概念页） ====================
@@ -326,6 +372,7 @@ const server = http.createServer((req, res) => {
           for (const s of missing) {
             writeMarkdown({ ...existing, ...p }, s);
             autoIngest({ ...existing, ...p }, s);
+            trackIngest(s, existing, "ingest");
           }
           if (missing.length) {
             existing.sinksWritten = [...already, ...missing.map((s) => s.id)].join(",");
@@ -339,6 +386,7 @@ const server = http.createServer((req, res) => {
           writeMarkdown(p, s);
           written.push(s.id);
           autoIngest(p, s);
+          trackIngest(s, p, "ingest");
         }
         pages.set(p.externalId, { ...p, sinksWritten: written.join(",") });
         persist();
@@ -410,3 +458,5 @@ const server = http.createServer((req, res) => {
 server.listen(PORT, "127.0.0.1", () =>
   console.log(`[bridge] Wiki 桥 v${VERSION} 已启动: http://127.0.0.1:${PORT} · sinks: ${sinks.map((s) => s.id).join(", ") || "无"} · LLM: ${llmReady() ? `${llm.provider}/${llm.model}` : "未配置"}`)
 );
+// 启动时为每个 sink 重建索引（历史数据也能立刻有 index.md）
+for (const s of sinks) rebuildIndex(s);
