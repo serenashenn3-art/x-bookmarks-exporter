@@ -290,9 +290,10 @@ async function classifyOne(id) {
 let wikiQueue = []; // 待推送推文 id
 let wikiQueueTotal = 0;
 let wikiProcessing = false;
+let wikiQueueTarget = ""; // 本批推送的目标 sink id（空 = 扩展设置里的默认 sink）
 
 async function persistWikiQueue() {
-  const state = { queue: wikiQueue, total: wikiQueueTotal };
+  const state = { queue: wikiQueue, total: wikiQueueTotal, target: wikiQueueTarget };
   try {
     await chrome.storage.session.set({ [WIKI_QUEUE_KEY]: state });
   } catch {
@@ -314,6 +315,7 @@ async function restoreWikiQueue() {
   if (state?.queue?.length) {
     wikiQueue = state.queue;
     wikiQueueTotal = state.total || wikiQueue.length;
+    wikiQueueTarget = state.target || "";
     processWikiQueue().catch(() => {});
   }
 }
@@ -325,10 +327,11 @@ async function clearPersistedWikiQueue() {
   await chrome.storage.local.remove(WIKI_QUEUE_KEY).catch(() => {});
 }
 
-async function enqueueWiki(tweetIds) {
+async function enqueueWiki(tweetIds, target = "") {
   const inQueue = new Set(wikiQueue);
   const fresh = tweetIds.filter((id) => !inQueue.has(id));
   if (!fresh.length) return 0;
+  if (target) wikiQueueTarget = target; // 本批显式指定目标 sink（如 claude/codex/kimi）
   wikiQueue.push(...fresh);
   wikiQueueTotal += fresh.length;
   await persistWikiQueue();
@@ -338,14 +341,17 @@ async function enqueueWiki(tweetIds) {
 
 /**
  * 推送单条到 LLM Wiki，返回 { success, error? }。
- * 重复推送按 ID 去重（已同步的跳过）；失败把原因写入 wikiSyncError 供卡片展示与重试。
+ * 按「书签 × 目标 sink」去重（同一书签可分别推多个 sink）；失败把原因写入 wikiSyncError 供卡片展示与重试。
  */
-async function syncOneToWiki(id) {
+async function syncOneToWiki(id, explicitTarget = "") {
   const tweet = await getTweet(id);
   if (!tweet) return { success: false, error: "推文不存在" };
-  if (tweet.wikiSynced) return { success: true, skipped: true };
   const cfg = await getWikiConfig();
   if (!cfg.enabled) return { success: false, error: "LLM Wiki 未启用" };
+  const target = explicitTarget || cfg.sink || "";
+  // 按目标 sink 去重：同一书签可分别推送到 obsidian / claude / codex 等多个目标
+  const sentTo = Array.isArray(tweet.wikiSinks) ? tweet.wikiSinks : [];
+  if (sentTo.includes(target)) return { success: true, skipped: true };
   try {
     const api = new WikiAPI(cfg.baseUrl);
     // 桥接端还没配 LLM 时，把扩展的 AI 配置同步过去（key 只需在扩展设置页输一次）；
@@ -355,9 +361,10 @@ async function syncOneToWiki(id) {
       const ai = await getAiConfig();
       await api.pushLLMConfig(ai).catch(() => {});
     }
-    const { pageUrl } = await api.pushPage(tweet, cfg.sink);
+    const { pageUrl } = await api.pushPage(tweet, target);
     const updated = await updateTweet(id, {
       wikiSynced: true,
+      wikiSinks: [...sentTo, target],
       wikiPageUrl: pageUrl,
       wikiSyncError: null,
       processingMode: "deep",
@@ -382,7 +389,7 @@ async function processWikiQueue() {
       const id = wikiQueue[0];
       broadcast({ action: "wikiSyncProgress", done: wikiQueueTotal - wikiQueue.length, total: wikiQueueTotal });
       try {
-        await syncOneToWiki(id);
+        await syncOneToWiki(id, wikiQueueTarget);
       } catch (e) {
         console.error("syncOneToWiki failed:", id, e); // 单条异常不阻塞队列
       }
@@ -396,6 +403,7 @@ async function processWikiQueue() {
     wikiProcessing = false;
     if (!wikiQueue.length) {
       wikiQueueTotal = 0;
+      wikiQueueTarget = "";
       await clearPersistedWikiQueue();
       broadcast({ action: "wikiSyncProgress", done: 0, total: 0, finished: true });
     }
@@ -563,7 +571,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return new WikiAPI(message.baseUrl || cfg.baseUrl).testConnection();
     },
     syncToWiki: () => syncOneToWiki(message.tweetId), // 单条：等待结果返回
-    batchSyncToWiki: async () => ({ success: true, queued: await enqueueWiki(message.tweetIds || []) }),
+    batchSyncToWiki: async () => ({ success: true, queued: await enqueueWiki(message.tweetIds || [], message.target || "") }),
     updateWikiStatus: async () => {
       // 仅允许修改 Wiki 相关字段（如 smart 模式拒绝推送：processingMode → light）
       const allow = ["processingMode", "wikiSynced", "wikiPageUrl", "wikiSyncError"];

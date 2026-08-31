@@ -27,7 +27,7 @@ const CONFIG_PATH = path.join(BRIDGE_DIR, "config.json");
 const DATA_DIR = path.join(BRIDGE_DIR, "data");
 const DB_PATH = path.join(DATA_DIR, "pages.json");
 const INGEST_LOG = path.join(DATA_DIR, "ingest.log");
-const VERSION = "0.3.1";
+const VERSION = "0.4.0";
 
 // ==================== 配置 ====================
 
@@ -316,21 +316,34 @@ const server = http.createServer((req, res) => {
     req.on("end", () => {
       try {
         const p = JSON.parse(body);
-        const dup = pages.has(p.externalId);
         const targets = pickSinks(p.target);
         if (!targets.length) return json(400, { ok: false, error: p.target ? `未知 sink: ${p.target}` : "未配置任何 sink" });
-        if (!dup) {
-          const written = [];
-          for (const s of targets) {
-            writeMarkdown(p, s);
-            written.push(s.id);
-            autoIngest(p, s);
+        const existing = pages.get(p.externalId);
+        if (existing) {
+          // 已存在：补写到尚未写入的 sink（同一条书签可分发到多个目标）
+          const already = new Set(String(existing.sinksWritten || "").split(",").filter(Boolean));
+          const missing = targets.filter((s) => !already.has(s.id));
+          for (const s of missing) {
+            writeMarkdown({ ...existing, ...p }, s);
+            autoIngest({ ...existing, ...p }, s);
           }
-          pages.set(p.externalId, { ...p, sinksWritten: written.join(",") });
-          persist();
+          if (missing.length) {
+            existing.sinksWritten = [...already, ...missing.map((s) => s.id)].join(",");
+            persist();
+          }
+          console.log(`[bridge] ${missing.length ? "补写 " + missing.map((s) => s.id).join(",") : "跳过重复"}: ${p.externalId} 「${existing.title}」`);
+          return json(200, { ok: true, pageUrl: `http://127.0.0.1:${PORT}/pages/${p.externalId}`, duplicate: true, added: missing.map((s) => s.id) });
         }
-        console.log(`[bridge] ${dup ? "跳过重复" : "新增"}: ${p.externalId} 「${p.title}」 → ${targets.map((s) => s.id).join(",")} (共 ${pages.size} 页)`);
-        return json(200, { ok: true, pageUrl: `http://127.0.0.1:${PORT}/pages/${p.externalId}`, duplicate: dup });
+        const written = [];
+        for (const s of targets) {
+          writeMarkdown(p, s);
+          written.push(s.id);
+          autoIngest(p, s);
+        }
+        pages.set(p.externalId, { ...p, sinksWritten: written.join(",") });
+        persist();
+        console.log(`[bridge] 新增: ${p.externalId} 「${p.title}」 → ${targets.map((s) => s.id).join(",")} (共 ${pages.size} 页)`);
+        return json(200, { ok: true, pageUrl: `http://127.0.0.1:${PORT}/pages/${p.externalId}`, duplicate: false });
       } catch (e) { return json(400, { ok: false, error: e.message }); }
     });
     return;

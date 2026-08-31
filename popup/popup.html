@@ -42,7 +42,8 @@
     <div id="progress" class="progress hidden"></div>
     <div id="batchToolbar" class="toolbar-batch hidden">
       <span class="batch-count">已选 <b id="batchCount">0</b> 条</span>
-      <button id="batchWikiBtn" class="btn-batch" disabled>🧠 推送到 LLM Wiki</button>
+      <select id="batchSink" class="batch-sink" title="推送目标（知识库 / AI 工具）"><option value="">默认知识库</option></select>
+      <button id="batchWikiBtn" class="btn-batch" disabled>🧠 推送</button>
       <button id="batchCancelBtn" class="btn-batch btn-secondary">取消</button>
     </div>
   </header>

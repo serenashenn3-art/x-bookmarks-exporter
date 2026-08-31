@@ -322,8 +322,27 @@ function toggleBatchMode(enabled) {
   batchMode = enabled;
   selectedIds.clear();
   $("batchToolbar").classList.toggle("hidden", !enabled);
+  if (enabled) fillBatchSinks(); // 进入批量模式时拉取可选推送目标
   updateBatchCount();
   renderActiveView(); // 重渲染以显示/隐藏卡片复选框
+}
+
+/** 从桥接服务拉取 sink 列表（Obsidian 知识库 + Claude/Codex/Kimi 等工具文件夹）填充目标下拉 */
+async function fillBatchSinks() {
+  const sel = $("batchSink");
+  sel.innerHTML = '<option value="">默认知识库</option>';
+  if (!wikiConfig?.baseUrl) return;
+  try {
+    const r = await fetch(`${wikiConfig.baseUrl}/api/sinks`);
+    const d = await r.json();
+    for (const s of d.sinks || []) {
+      const opt = document.createElement("option");
+      opt.value = s.id;
+      opt.textContent = (s.label || s.id) + (s.default ? "（默认）" : "");
+      sel.appendChild(opt);
+    }
+    if (wikiConfig.sink) sel.value = wikiConfig.sink;
+  } catch { /* 桥接不在线时保持默认选项 */ }
 }
 
 function updateBatchCount() {
@@ -334,9 +353,11 @@ function updateBatchCount() {
 async function batchPushToWiki() {
   if (!selectedIds.size) return;
   const ids = Array.from(selectedIds);
-  showToast(`开始批量同步 ${ids.length} 条…`, 6000);
-  const r = await send({ action: "batchSyncToWiki", tweetIds: ids });
-  if (!r?.success) showToast(`✗ 批量同步失败：${r?.error || "未知错误"}`);
+  const target = $("batchSink").value;
+  const targetName = $("batchSink").selectedOptions[0]?.textContent || "默认知识库";
+  showToast(`开始批量推送 ${ids.length} 条到「${targetName}」…`, 6000);
+  const r = await send({ action: "batchSyncToWiki", tweetIds: ids, target });
+  if (!r?.success) showToast(`✗ 批量推送失败：${r?.error || "未知错误"}`);
   toggleBatchMode(false);
   // 进度与结果通过 wikiSyncProgress / wikiSyncDone 广播更新
 }
