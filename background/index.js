@@ -347,7 +347,15 @@ async function syncOneToWiki(id) {
   const cfg = await getWikiConfig();
   if (!cfg.enabled) return { success: false, error: "LLM Wiki 未启用" };
   try {
-    const { pageUrl } = await new WikiAPI(cfg.baseUrl).pushPage(tweet);
+    const api = new WikiAPI(cfg.baseUrl);
+    // 桥接端还没配 LLM 时，把扩展的 AI 配置同步过去（key 只需在扩展设置页输一次）；
+    // 同步失败（如 anthropic/gemini 不兼容）不阻塞推送，仅自动实体抽取不生效
+    const h = await api.health();
+    if (h?.ok && h.llmReady === false) {
+      const ai = await getAiConfig();
+      await api.pushLLMConfig(ai).catch(() => {});
+    }
+    const { pageUrl } = await api.pushPage(tweet, cfg.sink);
     const updated = await updateTweet(id, {
       wikiSynced: true,
       wikiPageUrl: pageUrl,

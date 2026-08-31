@@ -1,10 +1,15 @@
 {
   "manifest_version": 3,
   "name": "X 书签 AI 分类",
-  "version": "2.2.0",
+  "version": "2.2.1",
   "minimum_chrome_version": "116",
   "description": "自动抓取 X 书签并用 AI 分类：多 AI 提供商、列表/汇总/看板三视图、Markdown/JSON/CSV 导出。",
-  "permissions": ["storage", "activeTab", "scripting", "downloads"],
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting",
+    "downloads"
+  ],
   "host_permissions": [
     "https://x.com/*",
     "https://twitter.com/*",
@@ -21,7 +26,10 @@
     "http://localhost:19828/*",
     "http://127.0.0.1:19828/*"
   ],
-  "optional_host_permissions": ["https://*/*", "http://*/*"],
+  "optional_host_permissions": [
+    "https://*/*",
+    "http://*/*"
+  ],
   "action": {
     "default_title": "X 书签 AI 分类",
     "default_popup": "popup/popup.html",
@@ -49,7 +57,9 @@
         "https://twitter.com/i/bookmarks*",
         "https://twitter.com/i/history*"
       ],
-      "js": ["content/scraper.js"],
+      "js": [
+        "content/scraper.js"
+      ],
       "run_at": "document_idle"
     }
   ],

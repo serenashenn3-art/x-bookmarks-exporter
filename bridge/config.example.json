@@ -21,6 +21,7 @@
   ],
   "llm": {
     "provider": "minimax",
+    "baseUrl": "",
     "model": "",
     "key": ""
   }

@@ -215,7 +215,15 @@ async function initWiki() {
     }
     const r = await new WikiAPI(cfg.baseUrl).testConnection();
     setWikiStatus(r.ok ? `✓ 已连接（LLM Wiki v${r.version}）` : `✗ ${r.error}`, r.ok);
-    if (r.ok) refreshWikiSinks(cfg.baseUrl, $("wikiSink").value);
+    if (r.ok) {
+      refreshWikiSinks(cfg.baseUrl, $("wikiSink").value);
+      // 桥接端未配 LLM 时，自动把本页的 AI 配置同步过去（厂商/key 只需在扩展里维护一份）
+      if (r.llmReady === false) {
+        const ai = await chrome.runtime.sendMessage({ action: "getAiConfig" }).catch(() => null);
+        const s = ai?.config ? await new WikiAPI(cfg.baseUrl).pushLLMConfig(ai.config) : null;
+        if (s?.ok) setWikiStatus(`✓ 已连接（LLM Wiki v${r.version}），已自动同步 AI 配置到桥接`, true);
+      }
+    }
   });
 }
 
