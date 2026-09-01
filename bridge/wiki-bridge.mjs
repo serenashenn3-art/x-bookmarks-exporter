@@ -27,7 +27,7 @@ const CONFIG_PATH = path.join(BRIDGE_DIR, "config.json");
 const DATA_DIR = path.join(BRIDGE_DIR, "data");
 const DB_PATH = path.join(DATA_DIR, "pages.json");
 const INGEST_LOG = path.join(DATA_DIR, "ingest.log");
-const VERSION = "0.5.0";
+const VERSION = "0.5.1";
 
 // ==================== 配置 ====================
 
@@ -105,6 +105,8 @@ function writeMarkdown(p, sink) {
   if (tags.length) md.push("", tags.map((t) => `#${t}`).join(" "));
   md.push("", `[原文链接](${p.url || ""})`);
   const file = path.join(sink.path, `${safeName(p.title)}-${p.externalId}.md`);
+  // 运行期间目录可能被用户删除/移动，写入前确保存在（启动时的 mkdir 不覆盖这种情况）
+  fs.mkdirSync(sink.path, { recursive: true });
   fs.writeFileSync(file, md.join("\n"));
   return file;
 }
