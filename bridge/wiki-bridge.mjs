@@ -13,7 +13,8 @@
  *    （内置实现，直接调 OpenAI 兼容 /chat/completions，无需安装任何 CLI）
  *  - 自带网页浏览界面：GET / 列表 · GET /pages/:id 详情
  *
- * 配置：bridge/config.json（参考 bridge/config.example.json，真实配置不要提交——含 API key）
+ * 配置：bridge/config.json（参考 bridge/config.example.json，真实配置不要提交——含 API key；
+ *        每次启动/修改会自动备份到 ~/.xbe-wiki-bridge.config.json，本地配置丢失时自动从备份恢复）
  * 运行：node bridge/wiki-bridge.mjs
  */
 import http from "node:http";
@@ -24,19 +25,39 @@ import os from "node:os";
 
 const BRIDGE_DIR = path.dirname(fileURLToPath(import.meta.url));
 const CONFIG_PATH = path.join(BRIDGE_DIR, "config.json");
+// 备份配置：bridge/ 目录可能被覆盖重装（如解压新版 ZIP），家目录下的备份用于自动恢复
+const BACKUP_CONFIG_PATH = path.join(os.homedir(), ".xbe-wiki-bridge.config.json");
 const DATA_DIR = path.join(BRIDGE_DIR, "data");
 const DB_PATH = path.join(DATA_DIR, "pages.json");
 const INGEST_LOG = path.join(DATA_DIR, "ingest.log");
-const VERSION = "0.5.1";
+const VERSION = "0.5.2";
 
 // ==================== 配置 ====================
 
 function loadConfig() {
   try {
-    return JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
+    const cfg = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
+    // 本地配置正常时顺带刷新备份
+    try { fs.writeFileSync(BACKUP_CONFIG_PATH, JSON.stringify(cfg, null, 2), { mode: 0o600 }); } catch {}
+    return cfg;
   } catch {
-    return { port: 19828, sinks: [], llm: {} };
+    try {
+      const backup = JSON.parse(fs.readFileSync(BACKUP_CONFIG_PATH, "utf8"));
+      // 用备份恢复本地配置
+      try { fs.writeFileSync(CONFIG_PATH, JSON.stringify(backup, null, 2), { mode: 0o600 }); } catch {}
+      console.log("[bridge] config.json 缺失，已从备份恢复:", BACKUP_CONFIG_PATH);
+      return backup;
+    } catch {
+      return { port: 19828, sinks: [], llm: {} };
+    }
   }
+}
+
+/** 写配置：本地 + 家目录备份双写 */
+function saveConfig() {
+  const text = JSON.stringify(config, null, 2);
+  fs.writeFileSync(CONFIG_PATH, text, { mode: 0o600 });
+  try { fs.writeFileSync(BACKUP_CONFIG_PATH, text, { mode: 0o600 }); } catch {}
 }
 const config = loadConfig();
 const PORT = config.port || 19828;
@@ -348,7 +369,7 @@ const server = http.createServer((req, res) => {
         llm.key = String(input.key || "");
         if (!llm.baseUrl) return json(400, { ok: false, error: `未知 provider 且未给 baseUrl: ${input.provider}` });
         config.llm = { provider: llm.provider, baseUrl: llm.baseUrl, model: llm.model, key: llm.key };
-        fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
+        saveConfig();
         console.log(`[bridge] LLM 配置已同步: ${llm.provider} / ${llm.model}`);
         return json(200, { ok: true, provider: llm.provider, model: llm.model });
       } catch (e) { return json(400, { ok: false, error: e.message }); }
@@ -443,7 +464,7 @@ const server = http.createServer((req, res) => {
         fs.mkdirSync(sink.path, { recursive: true });
         sinks.push(sink);
         config.sinks = sinks;
-        fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
+        saveConfig();
         console.log(`[bridge] 新增 sink: ${id} → ${sink.path}`);
         return json(200, { ok: true, sinks: sinks.map((s) => ({ id: s.id, label: s.label, default: !!s.default })) });
       } catch (e) { return json(400, { ok: false, error: e.message }); }
