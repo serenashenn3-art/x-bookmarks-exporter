@@ -1,3 +1,7 @@
+
+
+https://github.com/user-attachments/assets/05811b19-5120-42ae-927b-d1100a0e7ce4
+
 # X Bookmarks AI Classifier / X 书签 AI 分类
 
 ![Project Screenshot](docs/hero.png)
@@ -11,6 +15,8 @@ A Chrome extension (Manifest V3) that automatically scrapes your X (Twitter) boo
 ---
 
 ## 🎥 Tutorial / 教学视频
+
+https://github.com/user-attachments/assets/004f96b0-e2a1-43a4-ac27-82ad60eb7d56
 
 **最新版演示（v2.3，含 LLM Wiki 知识库联动）：[docs/tutorial.mp4](docs/tutorial.mp4)**（点击在线播放，75 秒带中文旁白：分类 → 三视图 → 存知识库 → 桥接多目标 → Obsidian 入库效果）
 
